@@ -1,0 +1,9 @@
+services:
+  api:
+    build:
+      target: builder
+    command: npx nodemon --watch src src/index.js
+    environment:
+      NODE_ENV: development
+    volumes:
+      - ./src:/app/src
