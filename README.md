@@ -1,32 +1,53 @@
-# hw-09 — Marketplace API contract (OpenAPI) + runtime validation
+# Marketplace API
 
-Курсове ДЗ №1: OpenAPI-контракт для Marketplace API (`/products`, `/orders`) і
-частина 5 у **варіанті Б** — рантайм-валідатор на кордоні.
+Курсовий проєкт: Marketplace API на **NestJS + TypeScript**.
 
-## Обраний варіант
+- ДЗ №1 (`hw-09`): OpenAPI-контракт (`/products`, `/orders`) і рантайм-валідація
+  на кордоні — **варіант Б**.
+- ДЗ №2 (`hw-11`): конфігурація застосунку (в процесі).
+
+## Обраний варіант (ДЗ №1, частина 5)
 
 **Варіант Б: `express-openapi-validator`.**
 
-Мінімальний Express-сервер (`src/`) підвантажує `openapi/openapi.yaml` і валідує
-кожен запит та кожну відповідь проти спеки (`validateRequests: true`,
-`validateResponses: true`). Помилки валідатора та власні помилки бізнес-логіки
-(404 / 422) перетворюються одним error-handler'ом (`src/app.js`) у
+Застосунок (`src/`) підвантажує `openapi/openapi.yaml` і валідує кожен запит
+та кожну відповідь проти спеки (`validateRequests: true`,
+`validateResponses: true`). Помилки валідатора (`src/common/openapi-error-handler.ts`)
+та власні помилки бізнес-логіки, що виникають у контролерах Nest
+(`src/common/all-exceptions.filter.ts`), перетворюються у
 `application/problem+json` з полями `type/title/status/detail/instance`.
 
-Дані — in-memory (`src/data.js`), без бази.
+Дані — in-memory (`ProductsService`, `OrdersService`), без бази.
+
+> Застосунок спочатку був написаний на Express (ДЗ №1); з ДЗ №2 перенесений на
+> NestJS, оскільки курс — про NestJS, і весь подальший конфіг-скелет
+> (`ConfigModule`, DI) розрахований саме на нього. Контракт, cursor-пагінація,
+> Idempotency-Key і problem+json-помилки поведінково не змінились.
 
 ## Структура
 
 ```
-openapi/openapi.yaml   # спека: 2 ресурси, 5 операцій, cursor-пагінація,
-                        # Idempotency-Key, problem+json
+openapi/openapi.yaml         # спека: 2 ресурси, 5 операцій, cursor-пагінація,
+                              # Idempotency-Key, problem+json
 src/
-  app.js                # Express app + express-openapi-validator + error-handler
-  server.js              # запуск сервера
-  data.js                 # in-memory продукти/замовлення + idempotency-store
-  pagination.js           # opaque cursor (base64) encode/decode
-  errors.js               # HttpError-підкласи (400/404/422)
-scripts/check-spec.js      # скрипт перевірки обсягу спеки (операції/ресурси/Idempotency-Key)
+  main.ts                    # bootstrap: express-openapi-validator middleware + global filters
+  app.module.ts
+  products/
+    products.controller.ts
+    products.service.ts        # in-memory каталог
+    products.module.ts
+  orders/
+    orders.controller.ts       # включно з Idempotency-Key семантикою
+    orders.service.ts          # in-memory замовлення + idempotency-store
+    orders.module.ts
+  common/
+    types.ts                   # Product/Order/OrderItem
+    errors.ts                  # HttpError-підкласи (400/404/422)
+    pagination.ts               # opaque cursor (base64) encode/decode
+    problem-json.ts             # спільний форматер application/problem+json
+    all-exceptions.filter.ts    # Nest ExceptionFilter — помилки контролерів/сервісів
+    openapi-error-handler.ts    # Express error-middleware — помилки express-openapi-validator
+scripts/check-spec.js        # скрипт перевірки обсягу спеки (операції/ресурси/Idempotency-Key)
 ```
 
 ## Встановлення
@@ -40,6 +61,9 @@ npm install
 ```
 npm start
 ```
+
+Компілює TypeScript (`npm run build`) і запускає `dist/main.js`. Для розробки
+з автоперезапуском: `npm run start:dev`.
 
 Сервер піднімається на `http://localhost:3000`.
 
@@ -149,11 +173,16 @@ curl -i -X POST http://localhost:3000/orders \
   -d "{\"items\":[{\"product_id\":\"prod_2\",\"quantity\":1}]}"
 ```
 
-Реалізація — `idempotencyStore` (Map) у `src/data.js`: ключ + sha256-хеш тіла
-запиту; той самий ключ+хеш повертає збережену відповідь із заголовком
-`Idempotency-Replay: true`; той самий ключ з іншим хешем -> `422` з
-`UnprocessableEntityError`.
+Реалізація — `idempotencyStore` (Map) у `OrdersService` (`src/orders/orders.service.ts`):
+ключ + sha256-хеш тіла запиту; той самий ключ+хеш повертає збережену відповідь
+із заголовком `Idempotency-Replay: true`; той самий ключ з іншим хешем -> `422`
+з `UnprocessableEntityError`.
 
 ## Версії, на яких перевірено
 
-`@redocly/cli 2.46.0`, `express 4.22.2`, `express-openapi-validator 5.6.2` (Node 20.12.1).
+`@redocly/cli 2.46.0`, `@nestjs/core 10.4.20`, `express 4.22.2`,
+`express-openapi-validator 5.6.2`, `typescript 7.0.2` (Node 20.12.1).
+
+> `@nestjs/*` пришпилені на v10: у v11+ `@nestjs/platform-express` тягне за
+> собою Express 5, а `express-openapi-validator@5.6.2` найнадійніше працює
+> саме з Express 4.
