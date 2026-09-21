@@ -137,6 +137,11 @@ Product ──n──n (OrderItem)──n──1─ Order ──1──1── P
 - ДЗ №2 (`hw-11`): конфігурація застосунку — zod-схема з fail-fast, `.env.example`,
   секрети поза git/образом, ротація пароля БД без рестарту. Деталі — розділ
   [Configuration](#configuration) нижче.
+- ДЗ №3 (`hw-12`): дата-шар — схема (`db/schema.sql`), seed на 100 000+ рядків
+  (`db/seed.sql`), 4 повільні запити з доказом прискорення через індекси
+  (`db/queries/`, `db/indexes.sql`, `db/OPTIMIZATIONS.md`), включно з
+  повнотекстовим пошуком по каталогу (GIN по `tsvector`). Деталі — розділ
+  [Дата-шар (ДЗ №3)](#дата-шар-дз-3) нижче.
 
 ### Обраний варіант (ДЗ №1, частина 5)
 
@@ -209,15 +214,16 @@ npm install
 
 #### Змінні середовища
 
-| Змінна | Обов'язкова | Default | Призначення |
-|---|---|---|---|
-| `NODE_ENV` | ні | `development` | `development` \| `production` \| `test` |
-| `PORT` | ні | `3000` | HTTP-порт застосунку |
-| `DB_HOST` | так | — | Хост Postgres |
-| `DB_PORT` | ні | `5432` | Порт Postgres |
-| `DB_NAME` | так | — | Назва бази |
-| `DB_USER` | так | — | Роль Postgres |
-| `DB_PASSWORD_FILE` | так | — | Шлях до файлу з паролем (не сам пароль!) |
+| Змінна | Обов'язкова | Default | Джерело | Призначення |
+|---|---|---|---|---|
+| `NODE_ENV` | ні | `development` | сховище ДЗ №2/#11: `.env` (dev) / оточення оркестрації (prod) | `development` \| `production` \| `test` |
+| `PORT` | ні | `3000` | сховище ДЗ №2/#11: `.env` (dev) / оточення оркестрації (prod) | HTTP-порт застосунку |
+| `DB_HOST` | так | — | сховище ДЗ №2/#11: `.env` (dev) / оточення оркестрації (prod) | Хост Postgres |
+| `DB_PORT` | ні | `5432` | сховище ДЗ №2/#11: `.env` (dev) / оточення оркестрації (prod) | Порт Postgres |
+| `DB_NAME` | так | — | сховище ДЗ №2/#11: `.env` (dev) / оточення оркестрації (prod) | Назва бази |
+| `DB_USER` | так | — | сховище ДЗ №2/#11: `.env` (dev) / оточення оркестрації (prod) | Роль Postgres |
+| `DB_PASSWORD_FILE` | так | — | сховище ДЗ №2/#11: `.env` (dev) / оточення оркестрації (prod) | Шлях до файлу з паролем (не сам пароль!) |
+| `DATABASE_URL` | так | — | **сховище ДЗ №2/#11:** `.env` (dev; контракт і фейковий пароль — у `.env.example`) / секрети оркестрації (prod). Окремого env-файлу під нього немає | Один рядок підключення до бази ДЗ №3 — для `psql`/тулінгу. Сам застосунок його не використовує — він підключається через `DB_HOST`+... вище (це і дає ротацію пароля без рестарту) |
 
 Реальний пароль ніколи не живе в env — лише шлях до файлу-секрету
 (`secrets/db_password`, поза git). `pg.Pool` отримує пароль через функцію,
@@ -275,6 +281,57 @@ docker run --rm myapp sh -c 'cat /app/.env'; echo $? # No such file or directory
 docker inspect --format '{{.Config.Env}}' myapp     # лише PATH/NODE_VERSION/YARN_VERSION базового образу
 docker history --no-trunc myapp | grep -i password  # порожньо
 ```
+
+## Дата-шар (ДЗ №3)
+
+Схема, seed на реалістичний обсяг і докази прискорення чотирьох запитів
+через індекси — усе в `db/`. Головна таблиця (для обсягу ≥100 000):
+**`orders`**. Таблиця, по якій шукає q4 (повнотекстовий пошук): **`products`**
+(теж ≥100 000).
+
+```
+db/schema.sql          # users, products (+ генерована search_vector), orders, order_items
+db/seed.sql             # >=100k orders, >=100k products, перекошені розподіли, VACUUM (ANALYZE)
+db/queries/q1.sql       # orders за buyer_id + період
+db/queries/q2.sql       # orders зі status = 'pending'
+db/queries/q3.sql       # users за lower(email) — логін без регістру
+db/queries/q4.sql       # повнотекстовий пошук products (plainto_tsquery)
+db/indexes.sql           # 4 індекси — по одному на запит, включно з GIN
+db/OPTIMIZATIONS.md      # EXPLAIN до/після на всі 4 + секція "Морфологія"
+```
+
+**Підняти базу** (свіжий клон, без правок файлів):
+
+```
+docker compose up -d --wait
+```
+
+**Підключитись:**
+
+```
+docker compose exec postgres psql -U marketplace_app -d marketplace
+```
+
+(дефолтні дев-креденшели контейнера лежать прямо в `docker-compose.yml`;
+окремого `secrets/db_password.example` не потрібно. Це окремий шлях для
+локального стенда/грейдера зі свіжого клона — він не є джерелом
+`DATABASE_URL`: застосунок бере підключення зі сховища, див. таблицю
+[Configuration](#configuration).)
+
+Повний цикл перевірки (той самий, який виконує грейдер):
+
+```
+docker compose down -v && docker compose up -d --wait
+psql "$DATABASE_URL" -f db/schema.sql
+psql "$DATABASE_URL" -f db/seed.sql
+psql "$DATABASE_URL" -c "EXPLAIN (ANALYZE, BUFFERS) $(cat db/queries/q1.sql)"   # ...і так для q2, q3, q4 — має бути Seq Scan
+psql "$DATABASE_URL" -f db/indexes.sql
+psql "$DATABASE_URL" -c "ANALYZE;"
+psql "$DATABASE_URL" -c "EXPLAIN (ANALYZE, BUFFERS) $(cat db/queries/q1.sql)"   # ...і так для q2, q3, q4 — Seq Scan має зникнути
+```
+
+Деталі — усі 4 пари EXPLAIN до/після, пояснення і секція «Морфологія» — у
+[`db/OPTIMIZATIONS.md`](db/OPTIMIZATIONS.md).
 
 ### Перевірки — ДЗ №1 (acceptance criteria)
 
@@ -441,6 +498,38 @@ curl http://localhost:3000/health
 ```
 
 `uptime` у другому виклику — більший за перший; процес не перезапускався.
+
+### Перевірки — ДЗ №3 (acceptance criteria)
+
+Повний цикл — див. [Дата-шар (ДЗ №3)](#дата-шар-дз-3) вище. Точкові
+перевірки:
+
+```
+# схема + FK
+psql "$DATABASE_URL" -f db/schema.sql
+psql "$DATABASE_URL" -Atc "SELECT count(*) FROM information_schema.table_constraints WHERE constraint_type='FOREIGN KEY' AND table_schema='public';"   # >= 3
+
+# обсяг
+psql "$DATABASE_URL" -f db/seed.sql
+psql "$DATABASE_URL" -Atc "SELECT count(*) FROM orders;"     # >= 100000
+psql "$DATABASE_URL" -Atc "SELECT count(*) FROM products;"   # >= 100000
+
+# після індексів: жоден не мертвий
+psql "$DATABASE_URL" -f db/indexes.sql && psql "$DATABASE_URL" -c "ANALYZE;"
+# ...прогнати всі 4 EXPLAIN (ANALYZE, BUFFERS), потім:
+psql "$DATABASE_URL" -Atc "SELECT indexrelname FROM pg_stat_user_indexes WHERE schemaname='public' AND idx_scan = 0 AND indexrelid NOT IN (SELECT conindid FROM pg_constraint WHERE conindid <> 0);"   # порожньо
+
+# partial/expression присутній (не GIN)
+psql "$DATABASE_URL" -Atc "SELECT count(*) FROM pg_indexes WHERE schemaname='public' AND indexdef NOT ILIKE '%USING gin%' AND (indexdef ILIKE '% WHERE %' OR indexdef ~ '\((\w+)\(');"   # >= 1
+
+# пошуковий індекс — GIN по tsvector
+psql "$DATABASE_URL" -Atc "SELECT count(*) FROM pg_index i JOIN pg_class c ON c.oid=i.indexrelid JOIN pg_am am ON am.oid=c.relam JOIN pg_opclass o ON o.oid=i.indclass[0] WHERE am.amname='gin' AND o.opcintype='tsvector'::regtype;"   # >= 1
+```
+
+Фактичний результат на цій машині: FK = 4, `orders` = 110 000, `products` =
+120 000, мертвих індексів = 0, partial/expression = 2
+(`idx_orders_pending_created`, `idx_users_email_lower`), GIN-по-tsvector = 1.
+Повні EXPLAIN — у [`db/OPTIMIZATIONS.md`](db/OPTIMIZATIONS.md).
 
 ### Версії, на яких перевірено
 

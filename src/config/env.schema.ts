@@ -9,6 +9,11 @@ export const envSchema = z.object({
   DB_NAME: z.string().min(1),
   DB_USER: z.string().min(1),
   DB_PASSWORD_FILE: z.string().min(1),
+
+  // Single connection string for psql / tooling / the grader (ДЗ №3).
+  // The app itself still connects via DB_HOST/../DB_PASSWORD_FILE above —
+  // that's what makes password rotation without a restart possible.
+  DATABASE_URL: z.string().url(),
 });
 
 export type Env = z.infer<typeof envSchema>;
