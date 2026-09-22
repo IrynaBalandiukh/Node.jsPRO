@@ -126,6 +126,24 @@ Product ──n──n (OrderItem)──n──1─ Order ──1──1── P
 розрахований саме на нього. Контракт, cursor-пагінація, `Idempotency-Key` і
 `problem+json`-помилки поведінково не змінились.
 
+### 2026-09-22 (ДЗ №4, `hw-13`)
+
+Було: raw-SQL схема з ДЗ №3 (`db/`), гроші — `numeric(10,2)`/`numeric(12,2)`.
+Стало: та сама схема — entities + relations + міграції TypeORM
+(`src/entities/`, `src/migrations/`), гроші — `integer` у мінорних
+одиницях (`*_cents`), як цього прямо вимагає умова ДЗ №13. Деталі й
+обґрунтування — розділ [TypeORM-шар (ДЗ №4)](#typeorm-шар-дз-4).
+
+Секрети (`scripts/with-secrets.sh`): умова ДЗ №13 припускає, що ця
+обгортка вже існує з ДЗ №11 — але фактичний ДЗ №11 у цьому репо пішов
+іншим шляхом (`DB_PASSWORD_FILE` — секрет-файл, що перечитується на кожне
+нове з'єднання для ротації без рестарту, розділ
+[Ротація пароля БД](#ротація-пароля-бд-без-рестарту-застосунку)), Infisical
+у репо не заводився. Обгортку написано з нуля саме зараз, за точною
+специфікацією з умови ДЗ №13, — основний шлях веде у сховище
+(`infisical run`), `SKIP_VAULT=1` лишається аварійним входом для грейдера
+(п.8 умови), а не основним способом роботи.
+
 ---
 
 ## Реалізація
@@ -142,6 +160,11 @@ Product ──n──n (OrderItem)──n──1─ Order ──1──1── P
   (`db/queries/`, `db/indexes.sql`, `db/OPTIMIZATIONS.md`), включно з
   повнотекстовим пошуком по каталогу (GIN по `tsvector`). Деталі — розділ
   [Дата-шар (ДЗ №3)](#дата-шар-дз-3) нижче.
+- ДЗ №4 (`hw-13`): та сама схема — тепер через TypeORM. Entities + relations
+  (`src/entities/`), міграції замість `synchronize` (`src/migrations/`),
+  ідемпотентний seed (`src/seed.ts`), N+1 доведено й вилікувано
+  (`src/demo-nplus1.ts`), звіт через `QueryBuilder` (`src/report.ts`).
+  Деталі — розділ [TypeORM-шар (ДЗ №4)](#typeorm-шар-дз-4) нижче.
 
 ### Обраний варіант (ДЗ №1, частина 5)
 
@@ -332,6 +355,242 @@ psql "$DATABASE_URL" -c "EXPLAIN (ANALYZE, BUFFERS) $(cat db/queries/q1.sql)"   
 
 Деталі — усі 4 пари EXPLAIN до/після, пояснення і секція «Морфологія» — у
 [`db/OPTIMIZATIONS.md`](db/OPTIMIZATIONS.md).
+
+## TypeORM-шар (ДЗ №4)
+
+Та сама схема з ДЗ №3 — тепер підняна над TypeORM так, як це робиться у
+проді: entities + relations + міграції, без жодного `synchronize: true`.
+
+```
+src/entities/
+  user.entity.ts        # users
+  product.entity.ts      # products
+  order.entity.ts         # orders
+  order-item.entity.ts     # order_items — явна join-entity (не @ManyToMany)
+  index.ts                 # barrel-експорт
+src/migrations/
+  <ts>-InitSchema.ts        # згенерована migration:generate, руками додано
+                             # 2 індекси (partial + expression), яких
+                             # декоратор @Index не вміє виразити
+src/data-source.ts         # synchronize: false, підключення лише з process.env
+src/seed.ts                 # детермінований ідемпотентний seed
+src/demo-nplus1.ts           # N+1 "до/після" з лічильником SQL-запитів
+src/report.ts                 # звіт через createQueryBuilder().getRawMany()
+scripts/with-secrets.sh        # обгортка над vault (Infisical) для команд, що ходять у базу
+```
+
+### Свідомий редизайн проти db/schema.sql (ДЗ №3)
+
+Гроші — `integer` у мінорних одиницях (`price_cents`, `total_amount_cents`,
+`unit_price_cents`), не `numeric`/`float`, як цього прямо вимагає ДЗ №13
+(і як домен уже описував їх у розділі [2. Домен](#2-домен) —
+`price_cents`/`total_cents` там були задекларовані ще на ДЗ №0). `PRIMARY
+KEY` — `bigint` (значення повертаються як `string` у TS, щоб не впертися в
+межу `Number` на великих ID/агрегатах).
+
+`search_vector` (generated `tsvector` + GIN, ДЗ №3) у TypeORM-шар свідомо не
+перенесений: повнотекстовий пошук не входить у задачі relations/N+1/report
+цього ДЗ, а `GENERATED ALWAYS AS ... STORED` TypeORM не вміє виразити
+декларативно через `@Column` без додаткового ручного SQL, яке нічого не
+додало б до acceptance criteria. Raw-SQL дизайн у `db/` лишається
+задокументованим джерелом істини для FTS.
+
+### Relations і onDelete
+
+| Зв'язок | Тип | `onDelete` | Чому |
+|---|---|---|---|
+| `Product.seller → User` | `n──1` | `RESTRICT` | Товари продавця — його історія; видалити продавця, поки в нього є товари, не можна. |
+| `Order.buyer → User` | `n──1` | `RESTRICT` | Замовлення покупця — фінансова історія; видалити покупця, поки в нього є замовлення, не можна. |
+| `OrderItem.order → Order` | `n──1` | `CASCADE` | Позиції замовлення — діти замовлення; видалення замовлення видаляє його позиції. |
+| `OrderItem.product → Product` | `n──1` | `RESTRICT` | Позиція замовлення фіксує, що саме було куплено; товар з існуючими order_items видалити не можна — інакше історія купівлі втрачає зв'язок з товаром. |
+
+`order_items` — M:N між `Order` і `Product` із даними на зв'язку
+(`quantity`, `unit_price_cents` — ціна саме на момент замовлення, може
+відрізнятись від поточної `Product.priceCents`), тому явна join-entity
+(`OrderItem`), не `@ManyToMany`.
+
+### Міграції
+
+```
+docker compose up -d --wait
+npm run build
+npm run migrate           # створює схему з нуля
+npm run migrate:show      # [X] InitSchema...
+npm run migrate:revert    # відкочує все — down() не заглушка
+npm run migrate           # повертає схему
+```
+
+CLI міграцій працює зі скомпільованим `DataSource` (`dist/data-source.js`) —
+підказка з умови ДЗ №13: `esbuild`-транспілятори не емітять decorator-метадані,
+тому і `migration:generate`, і `migration:run/show/revert` навмисно йдуть
+через `npm run build`, а не через `ts-node`.
+
+Щоб згенерувати нову міграцію після зміни entities (тільки коли попередня
+вже застосована — інакше генератор побачить порожню діфф-базу і скаже
+"No changes..."):
+
+```
+npm run build
+npm run migration:generate -- src/migrations/ІмʼяЗміни
+npm run build
+```
+
+### Seed
+
+```
+npm run seed
+npm run seed    # повторний запуск — без помилок, рядки не дублюються
+```
+
+Перевірка ідемпотентності (кількість рядків не змінюється між запусками):
+
+```
+docker compose exec postgres psql -U marketplace_app -d marketplace -c \
+  "SELECT (SELECT count(*) FROM users) users, (SELECT count(*) FROM products) products, (SELECT count(*) FROM orders) orders, (SELECT count(*) FROM order_items) order_items;"
+```
+
+Фактичний результат: `users = 8`, `products = 10`, `orders = 8`,
+`order_items = 13` — і до, і після другого запуску `npm run seed`.
+
+Ідемпотентність: `users` дедуплікуються через `upsert(..., ['email'])`
+(email — `UNIQUE` у схемі). `products`/`orders` природного unique-ключа в
+схемі не мають, тому дедуплікуються на рівні застосунку — insert
+пропускається, якщо рядок з тим самим детермінованим маркером (назва
+товару / `created_at` замовлення, обидва фіксовані в `seed.ts`, без
+`random()`/`Date.now()`) уже є. `order_items` ідуть услід за своїм `order`:
+якщо order уже існував, його items наново не створюються.
+
+### N+1 — доведено і вилікувано
+
+```
+npm run demo:nplus1
+```
+
+Граф `order → items → product` (2 рівні зв'язків). Наївна стратегія —
+список замовлень одним запитом, тоді окремий запит на `items` кожного
+замовлення в циклі, і ще окремий запит на `product` кожної позиції в
+циклі. N+1 не видно в коді (звичайний `for`-loop) — тільки в лозі SQL
+(власний `QueryCountLogger`, що інкрементить лічильник на кожен `query`).
+
+Фактичний результат на seed-наборі (два розміри вибірки — підмножина
+покупців vs усі покупці):
+
+| Стратегія | N=4 | N=8 |
+|---|---|---|
+| наївно (запит у циклі) | 17 запитів | 35 запитів |
+| relations (`{ items: { product: true } }`, JOIN) | **1 запит** | **1 запит** |
+
+«До» ≥ N і росте з N (17 → 35). «Після» — стала константа, що не залежить
+від N (1 запит і на 4, і на 8 замовлень) — задовольняє критерій «≤ 1 + 2 ×
+рівнів» (для 2 рівнів ліміт — 5) із запасом.
+
+### Звіт: QueryBuilder vs Repository
+
+```
+npm run report
+```
+
+«Топ продавців за виторгом» (тільки `status = 'paid'`): `SUM(quantity *
+unit_price_cents)` + `COUNT(DISTINCT order.id)`, `GROUP BY seller`, 3 JOIN
+(`order_items → orders`, `order_items → products`, `products → users`).
+Реалізовано через `createQueryBuilder().getRawMany()` (`src/report.ts`) —
+`find()`/`findOne()` не мають способу виразити агрегатну функцію чи
+`GROUP BY`, вони будують entity-графи, а не обчислені рядки.
+
+**Межа Repository vs QueryBuilder у цьому проєкті:** якщо запит — це
+"дістати граф entities" (з relations, без обчислень над рядками) —
+`Repository.find()`/`findOne()`. Якщо в запиті є агрегатна функція
+(`SUM`/`COUNT`/`AVG`), `GROUP BY`, чи потрібен `getRawMany()` над кількома
+таблицями одразу (звіт, дашборд, не "картка ресурсу") — `QueryBuilder`.
+Проміжний випадок (складний `WHERE`, кілька `JOIN`, але без агрегатів) теж
+іде через `Repository.find({ relations, where })` — доки не з'являється
+GROUP BY, `find()` лишається читабельнішим і безпечнішим (параметризація з
+коробки).
+
+### Секрети / vault
+
+`src/data-source.ts` читає підключення лише з `process.env` — ні зашитого
+хоста/пароля, ні читання власного env-файлу
+(`grep -nE "password:[[:space:]]*['\"]" src/data-source.ts` — порожньо).
+Значення туди приносить `scripts/with-secrets.sh` (ДЗ №11): усі
+npm-скрипти, що ходять у базу (`migrate`, `migrate:show`, `migrate:revert`,
+`seed`, `demo:nplus1`, `report`), уже загорнуті в
+`bash scripts/with-secrets.sh dev ...` — викликаються без жодних
+префіксів.
+
+Основний шлях — `infisical run --env=dev -- ...` (кешується локально в
+`.secrets/infisical.env`, поза git — одноразово наповнюється через
+`infisical export --env=dev > .secrets/infisical.env` після
+`infisical login && infisical init`). Аварійний вхід для грейдера —
+`SKIP_VAULT=1`: обгортка виконує команду напряму, значення DB_* приходять
+з оточення (дев-креденшели `docker-compose.yml`, не секрет). Перевірка, що
+обгортка вшита в потрібні скрипти — статична, без доступу до бази чи
+сховища:
+
+```
+node -e "const s=require('./package.json').scripts;const bad=['migrate','seed']
+  .filter(k=>/with-secrets\.sh/.test(s[k]||'')===false);
+  console.log(bad.length===0?'OK':'без обгортки: '+bad.join(', '));
+  process.exit(bad.length===0?0:1)"
+```
+
+## Grading
+
+Грейдер не має доступу до сховища — підняти й перевірити все можна цими
+командами, без правок файлів, зі свіжого клона:
+
+```
+docker compose up -d --wait
+export DB_HOST=127.0.0.1 DB_PORT=5432 DB_USER=marketplace_app DB_PASSWORD=changeme_local_dev_password DB_NAME=marketplace
+export SKIP_VAULT=1    # у грейдера немає доступу до сховища
+
+npm ci
+npx tsc --noEmit
+npm run build
+npm run migrate
+npm run migrate:show      # усі міграції — [X]
+npm run migrate:revert    # відкат
+npm run migrate           # повертає схему
+npm run seed
+npm run seed               # ідемпотентно — без помилок, без дублів
+npm run demo:nplus1        # "до" >= N, "після" — стала константа
+npm run report              # агрегований звіт, GROUP BY
+```
+
+### Перевірки — ДЗ №4 (acceptance criteria)
+
+Повний цикл — див. [Grading](#grading) вище. Точкові перевірки:
+
+```
+# компіляція чиста
+npx tsc --noEmit
+
+# synchronize вимкнено
+grep -rn "synchronize" src/    # -> synchronize: false (не true)
+
+# relations: onDelete — щонайменше 2 різні стратегії
+grep -rn "onDelete" src/       # -> CASCADE і RESTRICT
+
+# звіт через QueryBuilder: групування є
+grep -rniE "\.(add)?groupBy\(" src/
+
+# у DataSource немає зашитого пароля
+grep -nE "password:[[:space:]]*['\"]" src/data-source.ts   # -> порожньо
+
+# обгортка вшита в migrate/seed
+node -e "const s=require('./package.json').scripts;const bad=['migrate','seed']
+  .filter(k=>/with-secrets\.sh/.test(s[k]||'')===false);
+  console.log(bad.length===0?'OK':'без обгортки: '+bad.join(', '));
+  process.exit(bad.length===0?0:1)"
+```
+
+Фактичний результат на цій машині: `synchronize` — 1 збіг (`false`,
+не `true`); `onDelete` — 4 збіги, 2 різні стратегії (`CASCADE`,
+`RESTRICT`); `groupBy` — 2 збіги (`.groupBy(`, `.addGroupBy(`); `password:`
+з лапками в `data-source.ts` — 0 збігів; обгортка-чек — `OK`. N+1 і
+ідемпотентність seed — числа й команда перевірки вище, у розділах
+[N+1 — доведено і вилікувано](#n1--доведено-і-вилікувано) та
+[Seed](#seed).
 
 ### Перевірки — ДЗ №1 (acceptance criteria)
 
@@ -535,8 +794,12 @@ psql "$DATABASE_URL" -Atc "SELECT count(*) FROM pg_index i JOIN pg_class c ON c.
 
 `@redocly/cli 2.46.0`, `@nestjs/core 10.4.20`, `@nestjs/config 3.3.0`,
 `express 4.22.2`, `express-openapi-validator 5.6.2`, `zod 4.6.5`, `pg 8.23.0`,
-`typescript 7.0.2` (Node 20.12.1).
+`typescript 7.0.2`, `typeorm 0.3.31` (Node 20.12.1).
 
 > `@nestjs/*` пришпилені на v10: у v11+ `@nestjs/platform-express` тягне за
 > собою Express 5, а `express-openapi-validator@5.6.2` найнадійніше працює
 > саме з Express 4.
+
+> `typeorm` пришпилений на `0.3.31` (dist-tag `legacy`), не на `latest`
+> (`1.x`): `typeorm@1.x` вимагає Node `^20.19.0 || ^22.13.0 || >=24.11.0`,
+> тут — Node `20.12.1`. `0.3.31` вимагає лише `>=16.13.0`.

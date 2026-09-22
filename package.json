@@ -10,7 +10,14 @@
     "lint:openapi": "redocly lint openapi/openapi.yaml",
     "bundle:openapi": "redocly bundle openapi/openapi.yaml -o spec.json",
     "check:openapi": "npm run bundle:openapi && node scripts/check-spec.js",
-    "check:env": "npm run build && node scripts/check-env-example.mjs"
+    "check:env": "npm run build && node scripts/check-env-example.mjs",
+    "migration:generate": "bash scripts/with-secrets.sh dev npx typeorm migration:generate -d dist/data-source.js",
+    "migrate": "bash scripts/with-secrets.sh dev npx typeorm migration:run -d dist/data-source.js",
+    "migrate:show": "bash scripts/with-secrets.sh dev npx typeorm migration:show -d dist/data-source.js",
+    "migrate:revert": "bash scripts/with-secrets.sh dev npx typeorm migration:revert -d dist/data-source.js",
+    "seed": "bash scripts/with-secrets.sh dev node dist/seed.js",
+    "demo:nplus1": "bash scripts/with-secrets.sh dev node dist/demo-nplus1.js",
+    "report": "bash scripts/with-secrets.sh dev node dist/report.js"
   },
   "license": "ISC",
   "dependencies": {
@@ -23,6 +30,7 @@
     "pg": "^8.23.0",
     "reflect-metadata": "^0.2.2",
     "rxjs": "^7.8.2",
+    "typeorm": "^0.3.31",
     "zod": "^4.6.5"
   },
   "devDependencies": {
