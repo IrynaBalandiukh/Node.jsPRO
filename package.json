@@ -1,0 +1,44 @@
+{
+  "name": "marketplace-api",
+  "version": "1.0.0",
+  "description": "Marketplace API contract (OpenAPI) with runtime validation on the boundary",
+  "main": "dist/main.js",
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "start": "npm run build && node dist/main.js",
+    "start:dev": "node --watch -r ts-node/register src/main.ts",
+    "lint:openapi": "redocly lint openapi/openapi.yaml",
+    "bundle:openapi": "redocly bundle openapi/openapi.yaml -o spec.json",
+    "check:openapi": "npm run bundle:openapi && node scripts/check-spec.js",
+    "check:env": "npm run build && node scripts/check-env-example.mjs",
+    "migration:generate": "bash scripts/with-secrets.sh dev npx typeorm migration:generate -d dist/data-source.js",
+    "migrate": "bash scripts/with-secrets.sh dev npx typeorm migration:run -d dist/data-source.js",
+    "migrate:show": "bash scripts/with-secrets.sh dev npx typeorm migration:show -d dist/data-source.js",
+    "migrate:revert": "bash scripts/with-secrets.sh dev npx typeorm migration:revert -d dist/data-source.js",
+    "seed": "bash scripts/with-secrets.sh dev node dist/seed.js",
+    "demo:nplus1": "bash scripts/with-secrets.sh dev node dist/demo-nplus1.js",
+    "report": "bash scripts/with-secrets.sh dev node dist/report.js"
+  },
+  "license": "ISC",
+  "dependencies": {
+    "@nestjs/common": "^10.4.20",
+    "@nestjs/config": "^3.3.0",
+    "@nestjs/core": "^10.4.20",
+    "@nestjs/platform-express": "^10.4.20",
+    "express": "4.22.2",
+    "express-openapi-validator": "5.6.2",
+    "pg": "^8.23.0",
+    "reflect-metadata": "^0.2.2",
+    "rxjs": "^7.8.2",
+    "typeorm": "^0.3.31",
+    "zod": "^4.6.5"
+  },
+  "devDependencies": {
+    "@redocly/cli": "2.46.0",
+    "@types/express": "^5.0.6",
+    "@types/node": "^26.6.2",
+    "@types/pg": "^8.23.1",
+    "ts-node": "^10.9.2",
+    "typescript": "^7.0.2"
+  }
+}
