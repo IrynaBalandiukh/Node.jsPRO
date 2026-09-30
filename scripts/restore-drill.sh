@@ -12,7 +12,10 @@ DRILL_CONTAINER="${DRILL_CONTAINER:-marketplace-restore-drill}"
 DRILL_VOLUME="${DRILL_VOLUME:-marketplace_restore_drill_pgdata}"
 PG_IMAGE="${PG_IMAGE:-postgres:16-alpine}"
 
-now_ms() { date +%s%3N; }
+now_ms() {
+  local t; t="$(date +%s%3N)"
+  case "$t" in *N*) echo $(( $(date +%s) * 1000 )) ;; *) echo "$t" ;; esac   # BSD/macOS date без %N
+}
 cleanup() {
   docker rm -f -v "$DRILL_CONTAINER" > /dev/null 2>&1 || true
   docker volume rm -f "$DRILL_VOLUME" > /dev/null 2>&1 || true
