@@ -4,3 +4,6 @@ spec.json
 .env
 secrets/
 .secrets/
+
+# Локальні дампи (ДЗ №15)
+backups/

@@ -593,6 +593,47 @@ RETURNING price_cents` (так само для балансу): перевірк
 (повтор самого запису на застарілому читанні — той самий lost update),
 з експоненційним backoff + jitter і лімітом спроб, кожен повтор логується.
 
+## Data layer ops (ДЗ №15)
+
+Застосунок ходить у базу **через PgBouncer**: `app → pgbouncer:6432 → postgres:5432`.
+Конфіг — `pgbouncer/pgbouncer.ini` (+ `userlist.txt` з дев-паролем), `pool_mode = transaction`,
+`default_pool_size = 10`, `max_client_conn = 200`, адмін-консоль для `marketplace_app`.
+Рядок підключення (`DATABASE_URL`) у сховищі ДЗ #11 (dev і prod) треба вказати на хост/порт
+пулера — окремого env-файла немає; у `.env.example` оновлено хост/порт (пароль фейковий).
+
+```
+docker compose up -d --wait                       # postgres + pgbouncer
+psql -h 127.0.0.1 -p 6432 -U marketplace_app -d marketplace -c "SELECT 1"
+psql -h 127.0.0.1 -p 6432 -U marketplace_app -d pgbouncer -c "SHOW POOLS"   # pool_mode = transaction
+```
+
+**Бекап.** `bash scripts/with-secrets.sh dev bash scripts/backup.sh` → `pg_dump -Fc` у
+`backups/<db>_<YYYY-MM-DD_HH-MM-SS>.dump` (тека поза контейнером, у `.gitignore`) + поруч
+`.checksum` з контрольними значеннями на момент бекапу. Скрипт друкує шлях і сам перевіряє
+архів через `pg_restore --list`. Дамп береться з контейнера `postgres` **повз пулер** (довга
+REPEATABLE READ транзакція з `SET`-ами погано сумісна з transaction mode), тому на хості не
+потрібні `pg_dump`/`psql`. Розклад — `backup.cron` (щоночі о 02:30).
+
+**Відновлення / drill.** `bash scripts/with-secrets.sh dev bash scripts/restore-drill.sh`:
+бере останній дамп, піднімає окремий контейнер `postgres:16-alpine` з новим порожнім volume,
+робить `pg_restore --no-owner`, порівнює `users|products|orders|order_items|sum(orders)` із
+`.checksum` і друкує `MATCH` (інакше exit 1). Контейнер і volume створюються та знищуються
+самим скриптом, повторний запуск завжди з нуля. Результат прогону, RTO і RPO — `RESTORE-DRILL.md`.
+Ручне відновлення в робочу БД: `pg_restore --no-owner --clean --if-exists -d <db> <файл>`.
+
+### Чому transaction mode і що він ламає
+
+Transaction mode віддає серверне з'єднання клієнту лише на час транзакції, тож 200 клієнтів
+обслуговуються 10 з'єднаннями Postgres — для API з короткими запитами це найкраща віддача
+пулу. Ціна: сесійний стан не гарантовано живе між транзакціями, бо наступна транзакція
+клієнта може піти в інше серверне з'єднання. Ламаються: (1) session-level `SET`
+(`search_path`, `statement_timeout`, `timezone`) — треба `SET LOCAL` усередині транзакції;
+(2) named prepared statements драйвера — вимкнути або `max_prepared_statements = 200`
+(PgBouncer ≥ 1.21, у конфігу ввімкнено); (3) session-level advisory locks
+(`pg_advisory_lock`) — лок лишається на чужому з'єднанні, є лише `pg_advisory_xact_lock`;
+(4) `LISTEN/NOTIFY` і `WITH HOLD`-курсори; (5) `DISCARD ALL`/temp tables між транзакціями.
+Міграції й `FOR UPDATE`/`SKIP LOCKED` із ДЗ #14 працюють, бо живуть усередині однієї транзакції.
+
 ## Grading
 
 Грейдер не має доступу до сховища — підняти й перевірити все можна цими
@@ -620,6 +661,15 @@ npm run report              # агрегований звіт, GROUP BY
 npm run demo:race           # спроб 50, успішних 10, stock 0, відʼємних 0; exit 0
 npm run demo:workers        # "оброблено двічі: 0", розподіл по 4 воркерах, час < послідовного
 npm run demo:retry          # пійманий 40001 + повтор, баланс сходиться; exit 0
+
+# ДЗ №15 (PgBouncer + backup + restore-drill). Підключення — через PgBouncer (:6432).
+# Скрипти беруть підключення лише з $DATABASE_URL (без обгортки всередині), тому достатньо export.
+# Докер потрібен лише для `docker compose` — pg_dump/psql на хості не потрібні.
+export DATABASE_URL=postgres://marketplace_app:changeme_local_dev_password@127.0.0.1:6432/marketplace
+export SKIP_VAULT=1
+npm run migrate && npm run seed                 # щоб було що бекапити (на порожній БД теж працює)
+bash scripts/with-secrets.sh dev bash scripts/backup.sh          # друкує backups/marketplace_<дата>.dump
+bash scripts/with-secrets.sh dev bash scripts/restore-drill.sh   # друкує MATCH, exit 0
 ```
 
 ### Перевірки — ДЗ №4 (acceptance criteria)

@@ -15,6 +15,23 @@ services:
       timeout: 3s
       retries: 5
 
+  # Пулер зʼєднань (ДЗ №15): застосунок → pgbouncer:6432 → postgres:5432.
+  pgbouncer:
+    image: edoburu/pgbouncer:latest
+    depends_on:
+      postgres:
+        condition: service_healthy
+    ports:
+      - "6432:6432"
+    volumes:
+      - ./pgbouncer/pgbouncer.ini:/etc/pgbouncer/pgbouncer.ini:ro
+      - ./pgbouncer/userlist.txt:/etc/pgbouncer/userlist.txt:ro
+    healthcheck:
+      test: ["CMD-SHELL", "nc -z 127.0.0.1 6432"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
 volumes:
   marketplace_pgdata:
     name: marketplace_pgdata
