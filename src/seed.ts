@@ -20,17 +20,22 @@ interface SeedUser {
   email: string;
   passwordHash: string;
   role: UserRole;
+  balanceCents: number;
 }
 
+// Баланси покупців свідомо надлишкові (10 млн грн), щоб у demo:race
+// обмежувачем був саме stock, а не гаманець.
+const BUYER_BALANCE_CENTS = 1_000_000_000;
+
 const SEED_USERS: SeedUser[] = [
-  { email: 'admin@seed.marketplace.dev', passwordHash: 'seed$admin$hash', role: 'admin' },
-  { email: 'seller1@seed.marketplace.dev', passwordHash: 'seed$seller1$hash', role: 'seller' },
-  { email: 'seller2@seed.marketplace.dev', passwordHash: 'seed$seller2$hash', role: 'seller' },
-  { email: 'seller3@seed.marketplace.dev', passwordHash: 'seed$seller3$hash', role: 'seller' },
-  { email: 'buyer1@seed.marketplace.dev', passwordHash: 'seed$buyer1$hash', role: 'buyer' },
-  { email: 'buyer2@seed.marketplace.dev', passwordHash: 'seed$buyer2$hash', role: 'buyer' },
-  { email: 'buyer3@seed.marketplace.dev', passwordHash: 'seed$buyer3$hash', role: 'buyer' },
-  { email: 'buyer4@seed.marketplace.dev', passwordHash: 'seed$buyer4$hash', role: 'buyer' },
+  { email: 'admin@seed.marketplace.dev', passwordHash: 'seed$admin$hash', role: 'admin', balanceCents: 0 },
+  { email: 'seller1@seed.marketplace.dev', passwordHash: 'seed$seller1$hash', role: 'seller', balanceCents: 0 },
+  { email: 'seller2@seed.marketplace.dev', passwordHash: 'seed$seller2$hash', role: 'seller', balanceCents: 0 },
+  { email: 'seller3@seed.marketplace.dev', passwordHash: 'seed$seller3$hash', role: 'seller', balanceCents: 0 },
+  { email: 'buyer1@seed.marketplace.dev', passwordHash: 'seed$buyer1$hash', role: 'buyer', balanceCents: BUYER_BALANCE_CENTS },
+  { email: 'buyer2@seed.marketplace.dev', passwordHash: 'seed$buyer2$hash', role: 'buyer', balanceCents: BUYER_BALANCE_CENTS },
+  { email: 'buyer3@seed.marketplace.dev', passwordHash: 'seed$buyer3$hash', role: 'buyer', balanceCents: BUYER_BALANCE_CENTS },
+  { email: 'buyer4@seed.marketplace.dev', passwordHash: 'seed$buyer4$hash', role: 'buyer', balanceCents: BUYER_BALANCE_CENTS },
 ];
 
 interface SeedProduct {
@@ -131,7 +136,7 @@ async function seedUsers(): Promise<Map<string, User>> {
   const repo = AppDataSource.getRepository(User);
 
   await repo.upsert(
-    SEED_USERS.map((u) => ({ email: u.email, passwordHash: u.passwordHash, role: u.role })),
+    SEED_USERS.map((u) => ({ email: u.email, passwordHash: u.passwordHash, role: u.role, balanceCents: u.balanceCents })),
     ['email'],
   );
 

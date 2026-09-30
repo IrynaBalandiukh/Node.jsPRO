@@ -8,6 +8,7 @@ export type UserRole = 'buyer' | 'seller' | 'admin';
 // у БД (не тільки TS-типом) — той самий контракт, що й у db/schema.sql.
 @Entity({ name: 'users' })
 @Check(`"role" IN ('buyer', 'seller', 'admin')`)
+@Check(`"balance_cents" >= 0`)
 export class User {
   @PrimaryGeneratedColumn({ type: 'bigint' })
   id!: string;
@@ -21,6 +22,11 @@ export class User {
 
   @Column({ type: 'text' })
   role!: UserRole;
+
+  // Баланс у копійках (integer, не float); списується в checkout атомарним
+  // UPDATE ... WHERE balance_cents >= $n. CHECK >= 0 — страховка на рівні БД.
+  @Column({ name: 'balance_cents', type: 'integer', default: 0 })
+  balanceCents!: number;
 
   @CreateDateColumn({ name: 'created_at', type: 'timestamptz' })
   createdAt!: Date;

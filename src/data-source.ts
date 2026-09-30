@@ -5,6 +5,7 @@ import { User } from './entities/user.entity';
 import { Product } from './entities/product.entity';
 import { Order } from './entities/order.entity';
 import { OrderItem } from './entities/order-item.entity';
+import { Job } from './entities/job.entity';
 
 // Підключення приходить лише з process.env (ДЗ №13, п.7) — його наповнює
 // `infisical run` через scripts/with-secrets.sh (обгортка ДЗ №11), або
@@ -14,7 +15,8 @@ import { OrderItem } from './entities/order-item.entity';
 // DB_URL має пріоритет, якщо заданий (єдиний рядок підключення без ключа
 // `password:` у коді); інакше — окремі DB_HOST/DB_PORT/DB_USER/DB_PASSWORD/
 // DB_NAME.
-const DB_URL = process.env.DB_URL;
+// DATABASE_URL — синонім DB_URL (так його називає ДЗ №14).
+const DB_URL = process.env.DB_URL ?? process.env.DATABASE_URL;
 
 // Міграції — глоб, що охоплює і .ts (ts-node у розробці), і .js
 // (скомпільований dist, яким користується CLI міграцій і npm-скрипти —
@@ -38,7 +40,7 @@ export function buildDataSourceOptions(overrides: Partial<DataSourceOptions> = {
         }),
     // Прод-патерн: схему керують міграції, не introspection у рантаймі.
     synchronize: false,
-    entities: [User, Product, Order, OrderItem],
+    entities: [User, Product, Order, OrderItem, Job],
     migrations: [migrationsGlob],
     logging: false,
     ...overrides,
