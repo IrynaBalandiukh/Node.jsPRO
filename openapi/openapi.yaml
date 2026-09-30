@@ -1,0 +1,367 @@
+openapi: 3.0.3
+info:
+  title: Marketplace API
+  version: "1.0.0"
+  description: >
+    Contract for the Marketplace project: products catalog and order
+    creation. No authorization exists yet in this version of the API.
+
+security: []
+
+servers:
+  - url: http://localhost:3000
+    description: Local development
+
+tags:
+  - name: Products
+    description: Product catalog
+  - name: Orders
+    description: Order creation and lookup
+
+paths:
+  /products:
+    get:
+      operationId: listProducts
+      tags: [Products]
+      summary: List products
+      description: >
+        Returns a cursor-paginated list of products from the catalog,
+        ordered by creation date (newest first).
+      parameters:
+        - $ref: "#/components/parameters/LimitParam"
+        - $ref: "#/components/parameters/CursorParam"
+      responses:
+        "200":
+          description: A page of products.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ProductPage"
+              example:
+                items:
+                  - id: prod_1
+                    name: Mechanical Keyboard
+                    description: Hot-swappable 75% keyboard
+                    price_cents: 8999
+                    stock: 12
+                  - id: prod_2
+                    name: Wireless Mouse
+                    description: Ergonomic wireless mouse
+                    price_cents: 2500
+                    stock: 40
+                next_cursor: "eyJvZmZzZXQiOjJ9"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+
+  /products/{productId}:
+    get:
+      operationId: getProductById
+      tags: [Products]
+      summary: Get a single product
+      description: Returns a single product by its identifier.
+      parameters:
+        - $ref: "#/components/parameters/ProductIdParam"
+      responses:
+        "200":
+          description: The requested product.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Product"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /orders:
+    get:
+      operationId: listOrders
+      tags: [Orders]
+      summary: List orders
+      description: >
+        Returns a cursor-paginated list of orders, ordered by creation date
+        (newest first).
+      parameters:
+        - $ref: "#/components/parameters/LimitParam"
+        - $ref: "#/components/parameters/CursorParam"
+      responses:
+        "200":
+          description: A page of orders.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OrderPage"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+
+    post:
+      operationId: createOrder
+      tags: [Orders]
+      summary: Create an order
+      description: >
+        Creates a new order from a list of product line items. This
+        operation is idempotent: it must be called with an Idempotency-Key
+        header (see the parameter description below).
+      parameters:
+        - name: Idempotency-Key
+          in: header
+          required: true
+          description: >
+            Client-generated unique token for this create-order attempt
+            (a UUID v4 is recommended). Replaying the same Idempotency-Key
+            together with the exact same request body returns the original
+            201 response again (with an Idempotency-Replay: true header)
+            instead of creating a second order. Reusing the same key with a
+            different request body is a conflict and is rejected with 422.
+          schema:
+            type: string
+            minLength: 1
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateOrderRequest"
+            example:
+              items:
+                - product_id: prod_1
+                  quantity: 1
+                - product_id: prod_2
+                  quantity: 2
+      responses:
+        "201":
+          description: The created order.
+          headers:
+            Idempotency-Replay:
+              description: >
+                Present and set to "true" only when this response was
+                served from a previous call with the same Idempotency-Key
+                and the same request body, instead of creating a new order.
+              schema:
+                type: string
+                enum: ["true"]
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Order"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "422":
+          $ref: "#/components/responses/UnprocessableEntity"
+
+  /orders/{orderId}:
+    get:
+      operationId: getOrderById
+      tags: [Orders]
+      summary: Get a single order
+      description: Returns a single order by its identifier.
+      parameters:
+        - $ref: "#/components/parameters/OrderIdParam"
+      responses:
+        "200":
+          description: The requested order.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Order"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+components:
+  parameters:
+    LimitParam:
+      name: limit
+      in: query
+      required: false
+      description: Maximum number of items to return in a single page.
+      schema:
+        type: integer
+        minimum: 1
+        maximum: 100
+        default: 20
+
+    CursorParam:
+      name: cursor
+      in: query
+      required: false
+      description: >
+        Opaque pagination cursor returned as next_cursor by a previous call
+        to this operation. Clients must treat it as an opaque token: its
+        internal format is not part of the contract and may change at any
+        time. Omit it to fetch the first page.
+      schema:
+        type: string
+
+    ProductIdParam:
+      name: productId
+      in: path
+      required: true
+      description: Identifier of the product.
+      schema:
+        type: string
+
+    OrderIdParam:
+      name: orderId
+      in: path
+      required: true
+      description: Identifier of the order.
+      schema:
+        type: string
+
+  responses:
+    BadRequest:
+      description: The request is malformed or failed validation.
+      content:
+        application/problem+json:
+          schema:
+            $ref: "#/components/schemas/Problem"
+
+    NotFound:
+      description: The requested resource does not exist.
+      content:
+        application/problem+json:
+          schema:
+            $ref: "#/components/schemas/Problem"
+
+    UnprocessableEntity:
+      description: >
+        The request is well-formed but conflicts with existing state
+        (for example, an Idempotency-Key reused with a different body).
+      content:
+        application/problem+json:
+          schema:
+            $ref: "#/components/schemas/Problem"
+
+  schemas:
+    Problem:
+      type: object
+      description: RFC 7807 problem+json error body.
+      required: [type, title, status, detail, instance]
+      properties:
+        type:
+          type: string
+          format: uri-reference
+          description: A URI identifying the problem type.
+          example: about:blank
+        title:
+          type: string
+          description: Short, human-readable summary of the problem type.
+          example: Bad Request
+        status:
+          type: integer
+          description: The HTTP status code for this occurrence of the problem.
+          example: 400
+        detail:
+          type: string
+          description: Human-readable explanation specific to this occurrence.
+          example: "request/body/items must NOT have fewer than 1 items"
+        instance:
+          type: string
+          description: URI reference identifying the specific occurrence of the problem.
+          example: /orders
+
+    Product:
+      type: object
+      required: [id, name, price_cents, stock]
+      properties:
+        id:
+          type: string
+          example: prod_1
+        name:
+          type: string
+          example: Mechanical Keyboard
+        description:
+          type: string
+          example: Hot-swappable 75% keyboard
+        price_cents:
+          type: integer
+          description: Price in the smallest currency unit (cents). Never a decimal string.
+          example: 8999
+        stock:
+          type: integer
+          example: 12
+
+    ProductPage:
+      type: object
+      required: [items, next_cursor]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/Product"
+        next_cursor:
+          type: string
+          nullable: true
+          description: Opaque cursor for the next page, or null if there are no more pages.
+
+    OrderItem:
+      type: object
+      required: [product_id, quantity, unit_price_cents]
+      properties:
+        product_id:
+          type: string
+          example: prod_1
+        quantity:
+          type: integer
+          minimum: 1
+          example: 1
+        unit_price_cents:
+          type: integer
+          description: Product price in cents at the time the order was created.
+          example: 8999
+
+    Order:
+      type: object
+      required: [id, status, items, total_cents, created_at]
+      properties:
+        id:
+          type: string
+          example: order_1
+        status:
+          type: string
+          enum: [pending, paid, cancelled]
+          example: pending
+        items:
+          type: array
+          minItems: 1
+          items:
+            $ref: "#/components/schemas/OrderItem"
+        total_cents:
+          type: integer
+          description: Sum of unit_price_cents * quantity across all items, in cents.
+          example: 13999
+        created_at:
+          type: string
+          format: date-time
+
+    OrderPage:
+      type: object
+      required: [items, next_cursor]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/Order"
+        next_cursor:
+          type: string
+          nullable: true
+          description: Opaque cursor for the next page, or null if there are no more pages.
+
+    CreateOrderRequest:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          minItems: 1
+          items:
+            type: object
+            required: [product_id, quantity]
+            properties:
+              product_id:
+                type: string
+                example: prod_1
+              quantity:
+                type: integer
+                minimum: 1
+                example: 1

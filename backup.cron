@@ -1,0 +1,2 @@
+# Щоночі о 02:30 — повний pg_dump -Fc (ДЗ №15). Шлях до репо підставити свій.
+30 2 * * * cd /opt/marketplace && bash scripts/with-secrets.sh prod bash scripts/backup.sh >> backups/backup.log 2>&1
