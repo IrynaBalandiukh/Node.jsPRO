@@ -32,6 +32,44 @@ services:
       timeout: 3s
       retries: 5
 
+  # Pact Broker (ДЗ №16): сховище контрактів і гейт can-i-deploy.
+  # Локальний брокер: http://127.0.0.1:9292 (це не секрет, а адреса цього compose).
+  pact-broker-db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: pact
+      POSTGRES_PASSWORD: pact_local_dev_password
+      POSTGRES_DB: pact
+    volumes:
+      - pact_broker_pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U pact -d pact"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  pact-broker:
+    image: pactfoundation/pact-broker:latest
+    depends_on:
+      pact-broker-db:
+        condition: service_healthy
+    ports:
+      - "9292:9292"
+    environment:
+      PACT_BROKER_DATABASE_URL: postgres://pact:pact_local_dev_password@pact-broker-db/pact
+      PACT_BROKER_LOG_LEVEL: INFO
+      PACT_BROKER_PORT: "9292"
+    healthcheck:
+      # 127.0.0.1, а не localhost: localhost у контейнері може резолвитись у
+      # ::1, а puma слухає лише IPv4.
+      test: ["CMD-SHELL", "wget -q --spider http://127.0.0.1:9292/diagnostic/status/heartbeat || exit 1"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+      start_period: 10s
+
 volumes:
   marketplace_pgdata:
     name: marketplace_pgdata
+  pact_broker_pgdata:
+    name: pact_broker_pgdata

@@ -2,7 +2,7 @@ import { Body, Controller, Get, Headers, Param, Post, Query, Res } from '@nestjs
 import type { Response } from 'express';
 import * as crypto from 'node:crypto';
 import { OrdersService } from './orders.service';
-import { paginate, Page } from '../common/pagination';
+import { paginateQuery, Page } from '../common/pagination';
 import { NotFoundError, UnprocessableEntityError } from '../common/errors';
 import { Order } from '../common/types';
 
@@ -15,16 +15,16 @@ export class OrdersController {
   constructor(private readonly ordersService: OrdersService) {}
 
   @Get()
-  list(@Query('limit') limit?: string, @Query('cursor') cursor?: string): Page<Order> {
-    return paginate(this.ordersService.findAll(), {
+  list(@Query('limit') limit?: string, @Query('cursor') cursor?: string): Promise<Page<Order>> {
+    return paginateQuery((l, o) => this.ordersService.findAll(l, o), {
       limit: limit ? Number(limit) : undefined,
       cursor,
     });
   }
 
   @Get(':orderId')
-  getById(@Param('orderId') orderId: string): Order {
-    const order = this.ordersService.findById(orderId);
+  async getById(@Param('orderId') orderId: string): Promise<Order> {
+    const order = await this.ordersService.findById(orderId);
     if (!order) {
       throw new NotFoundError(`Order '${orderId}' was not found`);
     }
@@ -32,11 +32,11 @@ export class OrdersController {
   }
 
   @Post()
-  create(
+  async create(
     @Headers('idempotency-key') idempotencyKey: string,
     @Body() body: CreateOrderBody,
     @Res({ passthrough: true }) res: Response,
-  ): Order {
+  ): Promise<Order> {
     const bodyHash = crypto.createHash('sha256').update(JSON.stringify(body)).digest('hex');
 
     const stored = this.ordersService.idempotencyStore.get(idempotencyKey);
@@ -51,7 +51,7 @@ export class OrdersController {
       return stored.body;
     }
 
-    const { order, error } = this.ordersService.create(body.items);
+    const { order, error } = await this.ordersService.create(body.items);
     if (error === 'product_not_found' || !order) {
       throw new NotFoundError('One or more products referenced in items do not exist');
     }

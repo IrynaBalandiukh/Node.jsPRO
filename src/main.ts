@@ -1,13 +1,9 @@
 import "reflect-metadata";
-import * as path from "node:path";
-import { json } from "express";
-import * as OpenApiValidator from "express-openapi-validator";
 import { NestFactory } from "@nestjs/core";
 import { NestExpressApplication } from "@nestjs/platform-express";
 import { ConfigService } from "@nestjs/config";
 import { AppModule } from "./app.module";
-import { AllExceptionsFilter } from "./common/all-exceptions.filter";
-import { openApiErrorHandler } from "./common/openapi-error-handler";
+import { configureApp } from "./app.setup";
 import { Env } from "./config/env.schema";
 
 async function bootstrap() {
@@ -15,22 +11,7 @@ async function bootstrap() {
     bodyParser: false,
   });
 
-  const apiSpec = path.join(__dirname, "..", "openapi", "openapi.yaml");
-
-  app.use(json());
-  app.use(
-    OpenApiValidator.middleware({
-      apiSpec,
-      validateRequests: true,
-      validateResponses: true,
-      // /health is operational infrastructure, not a Marketplace API
-      // resource — it isn't part of the OpenAPI contract.
-      ignorePaths: /^\/health/,
-    }),
-  );
-  app.use(openApiErrorHandler);
-
-  app.useGlobalFilters(new AllExceptionsFilter());
+  configureApp(app);
 
   const configService = app.get(ConfigService<Env, true>);
   const port = configService.get("PORT", { infer: true });

@@ -1,6 +1,8 @@
 import { Injectable } from '@nestjs/common';
-import { ProductsService } from '../products/products.service';
-import { Order, OrderItem } from '../common/types';
+import { Order } from '../common/types';
+import { NestOrdersRepository } from '../repositories/orders.repository';
+import { NestProductsRepository } from '../repositories/products.repository';
+import { NestUsersRepository } from '../repositories/users.repository';
 
 export interface CreateOrderResult {
   order?: Order;
@@ -13,44 +15,44 @@ export interface IdempotencyRecord {
   body: Order;
 }
 
+// У поточній версії API немає авторизації (див. openapi.yaml), тож замовлення
+// оформлюються від імені одного службового покупця; створюється лениво й
+// ідемпотентно (INSERT ... ON CONFLICT).
+const GUEST_BUYER = {
+  email: 'guest-buyer@marketplace.local',
+  passwordHash: '!',
+  role: 'buyer' as const,
+};
+
 @Injectable()
 export class OrdersService {
-  private readonly orders: Order[] = [];
-  private nextOrderNumber = 1;
   readonly idempotencyStore = new Map<string, IdempotencyRecord>();
 
-  constructor(private readonly productsService: ProductsService) {}
+  constructor(
+    private readonly orders: NestOrdersRepository,
+    private readonly products: NestProductsRepository,
+    private readonly users: NestUsersRepository,
+  ) {}
 
-  findAll(): Order[] {
-    return this.orders;
+  findAll(limit: number, offset: number): Promise<Order[]> {
+    return this.orders.list(limit, offset);
   }
 
-  findById(id: string): Order | undefined {
-    return this.orders.find((o) => o.id === id);
+  findById(id: string): Promise<Order | null> {
+    return this.orders.findById(id);
   }
 
-  create(items: Array<{ product_id: string; quantity: number }>): CreateOrderResult {
-    const orderItems: (OrderItem | null)[] = items.map(({ product_id, quantity }) => {
-      const product = this.productsService.findById(product_id);
-      return product ? { product_id, quantity, unit_price_cents: product.price_cents } : null;
-    });
-
-    if (orderItems.some((item) => item === null)) {
+  async create(items: Array<{ product_id: string; quantity: number }>): Promise<CreateOrderResult> {
+    const existing = await this.products.findExistingIds(items.map((i) => i.product_id));
+    if (items.some((i) => !existing.has(i.product_id))) {
       return { error: 'product_not_found' };
     }
 
-    const resolvedItems = orderItems as OrderItem[];
-    const total_cents = resolvedItems.reduce((sum, item) => sum + item.unit_price_cents * item.quantity, 0);
-
-    const order: Order = {
-      id: `order_${this.nextOrderNumber++}`,
-      status: 'pending',
-      items: resolvedItems,
-      total_cents,
-      created_at: new Date().toISOString(),
-    };
-
-    this.orders.push(order);
+    const buyer = await this.users.ensure(GUEST_BUYER);
+    const order = await this.orders.create(
+      buyer.id,
+      items.map((i) => ({ productId: i.product_id, quantity: i.quantity })),
+    );
     return { order };
   }
 }

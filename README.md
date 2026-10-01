@@ -634,6 +634,156 @@ Transaction mode віддає серверне з'єднання клієнту 
 (4) `LISTEN/NOTIFY` і `WITH HOLD`-курсори; (5) `DISCARD ALL`/temp tables між транзакціями.
 Міграції й `FOR UPDATE`/`SKIP LOCKED` із ДЗ #14 працюють, бо живуть усередині однієї транзакції.
 
+## Тестування (ДЗ №16)
+
+«Драбинка довіри» для курсового: integration проти справжнього Postgres у
+testcontainers → E2E через supertest → контрактний тест Pact із брокером і
+`can-i-deploy`. Потрібен лише запущений Docker.
+
+> З ДЗ №16 `Product`/`Order` у HTTP-шарі більше не in-memory: `src/repositories/*`
+> ходять у Postgres (через `pg.Pool`; репозиторій приймає будь-що з `query()`),
+> а сервіси — тонкі. Без авторизації замовлення оформлюються від службового
+> покупця `guest-buyer@marketplace.local` (створюється через `INSERT … ON CONFLICT`).
+> Ідентифікатори — рядкові `bigint` (`"1"`), спека це дозволяє (`type: string`).
+
+### Команди
+
+| Команда | Що робить |
+|---|---|
+| `npm run test:integration` | тести репозиторіїв (users/products/orders, 15 тестів) проти `postgres:16-alpine` |
+| `npm run test:e2e` | повний `AppModule` + supertest: створити замовлення → прочитати; 404 і 400 |
+| `npm run test:contract` | consumer-тест Pact, генерує `pacts/marketplace-web-marketplace-api.json` |
+| `npm run verify:provider` | provider verification: справжній застосунок + БД у testcontainer проти контракту |
+
+Збірка — `tsc` (`tsconfig.test.json` → `dist-test/`), бо esbuild-трансформери не
+емітять decorator-метадані для Nest DI; jest запускає вже скомпільований JS.
+`jest.config.js`: `reporters: ['default']` (однаковий вивід у будь-якому
+середовищі, див. Jest 30 `detectAgent`) і `maxWorkers: 1` (кожен воркер множить контейнери).
+
+Структура: `test/integration/` (тести + `testkit/`: `postgres.ts` — контейнер і
+реальні міграції, `builders.ts` — `aUser()/aSeller()/aProduct()`, `app.ts` —
+запуск застосунку), `test/e2e/`, `test/contract/`, `pacts/`.
+Конфігурація застосунку (body parser, OpenAPI-валідація, фільтр помилок) живе в
+`src/app.setup.ts::configureApp` і викликається і з `main.ts`, і з тестів —
+E2E перевіряє той самий застосунок, що їде в прод. Валідація запитів у проєкті
+робиться `express-openapi-validator` (не `ValidationPipe`), негативні кейси E2E
+— 400 від неї і 404 від контролера.
+
+`DATABASE_URL` у тестах не з vault: його видає контейнер у рантаймі
+(`container.getConnectionUri()`), а E2E передає застосунку через env. Vault
+лишається джерелом для звичайного запуску застосунку.
+
+### Ізоляція тестів: контейнер-на-файл + TRUNCATE
+
+Кожен тестовий файл піднімає власний контейнер (повна ізоляція між файлами,
+контейнер знищується в `afterAll` — на другому прогоні нічого не лишається
+від першого), а всередині файла `beforeEach` робить
+`TRUNCATE … RESTART IDENTITY CASCADE`. Я не обрав ROLLBACK, бо E2E і provider
+verification ходять через пул застосунку (кілька з'єднань) — одну транзакцію
+на тест через HTTP не «обгорнеш», а єдина стратегія для всіх шарів простіша;
+TRUNCATE у порожній БД миттєвий. Повторний `npm run test:integration &&
+npm run test:integration` зелений без ручної чистки.
+
+### Що перевіряють integration-тести (те, чого не покаже мок)
+
+UNIQUE (`23505` на дубль email), FK (`23503`: товар без продавця, замовлення без
+покупця, `ON DELETE RESTRICT` для товару в замовленні), CHECK (`23514`: роль,
+ціна), `ON DELETE CASCADE` позицій, `INSERT … ON CONFLICT` (`ensure()`),
+JOIN + `json_agg` (замовлення з позиціями), агрегація `GROUP BY` (суми по
+покупцях), атомарний `UPDATE … WHERE stock >= n`.
+
+### Contract-тест і broker
+
+Consumer (`marketplace-web`, уявний фронтенд) описує 4 interactions з provider
+states (`GET /products/{id}`, `GET /orders/{id}` 200 і 404, `POST /orders`),
+шляхи і форми — з `openapi/openapi.yaml`; значення через `MatchersV3`
+(`like`/`regex`/`integer`). Provider verification піднімає застосунок на
+випадковому порту, `stateHandlers` сідять БД через `INSERT … ON CONFLICT DO NOTHING`.
+Файл `pacts/*.json` закомічений (щоб verification працював зі свіжого клона
+без попереднього `test:contract`); CI генерує його заново.
+
+`verify:provider` має два режими: без `PACT_BROKER_URL` — контракт з файлу, без
+публікації; з `PACT_BROKER_URL` — контракт береться з брокера і результат
+публікується (`publishVerificationResult: true`, версія провайдера —
+`PROVIDER_VERSION`, дефолт `1.0.0`). Код читає лише
+`process.env.PACT_BROKER_URL` / `PACT_BROKER_TOKEN` (токен у репо немає).
+
+**Основний шлях** (адреса й токен брокера лежать у сховищі з ДЗ №11 і
+приїжджають через обгортку):
+
+```bash
+bash scripts/with-secrets.sh dev npm run verify:provider
+```
+
+**Аварійний шлях для грейдера** (немає сховища; `SKIP_VAULT=1` виконує рівно ту
+саму команду, змінна передається напряму):
+
+```bash
+PACT_BROKER_URL=http://127.0.0.1:9292 npm run verify:provider
+# або: SKIP_VAULT=1 PACT_BROKER_URL=http://127.0.0.1:9292 bash scripts/with-secrets.sh dev npm run verify:provider
+```
+
+#### Брокер локально
+
+```bash
+docker compose up -d --wait            # postgres, pgbouncer, pact-broker-db, pact-broker (UI: http://127.0.0.1:9292)
+```
+
+#### Гейт can-i-deploy: «не можна» → «можна» (мій реальний прогін)
+
+Версія консюмера і провайдера — `1.0.0`; брокер свіжий (порожній volume).
+
+```bash
+export PACT_BROKER_URL=http://127.0.0.1:9292
+
+# 2. publish контракту
+curl -X PUT "$PACT_BROKER_URL/pacts/provider/marketplace-api/consumer/marketplace-web/version/1.0.0" \
+  -H 'Content-Type: application/json' -d @pacts/marketplace-web-marketplace-api.json     # -> HTTP 201
+
+# 3. verification з publishVerificationResult: true
+PACT_BROKER_URL=$PACT_BROKER_URL npm run verify:provider                                 # -> exit 0, "Results published to Pact Broker"
+
+# 5a. ДО тега prod на версії провайдера:
+curl "$PACT_BROKER_URL/can-i-deploy?pacticipant=marketplace-web&version=1.0.0&to=prod"
+```
+
+```json
+{"summary":{"deployable":null,"reason":"There is no verified pact between version 1.0.0 of marketplace-web and the latest version of marketplace-api with tag prod (no such version exists)","success":0,"failed":0,"unknown":1}, ...}
+```
+
+```bash
+# 4. тег prod — на версію ПРОВАЙДЕРА (та сама, що в providerVersion)
+curl -X PUT "$PACT_BROKER_URL/pacticipants/marketplace-api/versions/1.0.0/tags/prod" \
+  -H 'Content-Type: application/json'                                                    # -> HTTP 201
+
+# 5b. ПІСЛЯ тега — та сама команда:
+curl "$PACT_BROKER_URL/can-i-deploy?pacticipant=marketplace-web&version=1.0.0&to=prod"
+```
+
+```json
+{"summary":{"deployable":true,"reason":"All required verification results are published and successful","success":1,"failed":0,"unknown":0}, ...}
+```
+
+Поки жодну версію провайдера не позначено `prod`, брокер чесно відповідає
+`unknown` — гейт не «завжди зелений». Те саме, але з exit-кодом (1, якщо
+`deployable` не `true`) і з `Authorization: Bearer $PACT_BROKER_TOKEN`, якщо токен
+заданий: `bash scripts/pact-broker.sh {publish|tag-prod|can-i-deploy}`.
+
+#### CI
+
+`.github/workflows/ci.yml`: job `test` (tsc, integration, e2e) і job `contract`:
+consumer-тест → `publish` → `verify:provider` (публікує результат) →
+`can-i-deploy` (падає, якщо `deployable != true`). `PACT_BROKER_URL` і
+`PACT_BROKER_TOKEN` — secrets GitHub; версії — SHA коміту.
+Не вмикайте `DEBUG=testcontainers*` у CI: бібліотека логує після завершення
+тестів, і jest віддає exit 1 при зелених тестах.
+
+Нотатка про платформу: на Docker Desktop (Windows) `localhost` може вести в
+`::1`, де проброс порту рве з'єднання (`ECONNRESET`) — testkit підміняє
+`localhost` на `127.0.0.1`. Версії: `jest 30`, `testcontainers 10`
+(v12 вимагає Node ≥ 22.22, а Dockerfile — Node 20), `@pact-foundation/pact 15`
+(v17 вимагає Node ≥ 22).
+
 ## Grading
 
 Грейдер не має доступу до сховища — підняти й перевірити все можна цими
@@ -909,7 +1059,7 @@ psql "$DATABASE_URL" -Atc "SELECT count(*) FROM pg_index i JOIN pg_class c ON c.
 
 `@redocly/cli 2.46.0`, `@nestjs/core 10.4.20`, `@nestjs/config 3.3.0`,
 `express 4.22.2`, `express-openapi-validator 5.6.2`, `zod 4.6.5`, `pg 8.23.0`,
-`typescript 7.0.2`, `typeorm 0.3.31` (Node 20.12.1).
+`typescript 7.0.2`, `typeorm 0.3.31` (Node 20.12.1), `jest 30.5.2`, `testcontainers 10`, `supertest 7.3.0`, `@pact-foundation/pact 15.0.1`.
 
 > `@nestjs/*` пришпилені на v10: у v11+ `@nestjs/platform-express` тягне за
 > собою Express 5, а `express-openapi-validator@5.6.2` найнадійніше працює

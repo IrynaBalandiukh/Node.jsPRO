@@ -29,3 +29,18 @@ export function paginate<T>(
   const next_cursor = nextOffset < collection.length ? encodeCursor(nextOffset) : null;
   return { items: page, next_cursor };
 }
+
+// Те саме, але для запиту в БД: просимо limit+1 рядків — зайвий рядок і є
+// ознакою «є наступна сторінка», без окремого COUNT.
+export async function paginateQuery<T>(
+  fetch: (limit: number, offset: number) => Promise<T[]>,
+  { limit = 20, cursor }: { limit?: number; cursor?: string } = {},
+): Promise<Page<T>> {
+  const offset = cursor ? decodeCursor(cursor) : 0;
+  const rows = await fetch(limit + 1, offset);
+  const hasMore = rows.length > limit;
+  return {
+    items: hasMore ? rows.slice(0, limit) : rows,
+    next_cursor: hasMore ? encodeCursor(offset + limit) : null,
+  };
+}

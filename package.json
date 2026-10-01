@@ -29,7 +29,12 @@
     "prereport": "npm run build",
     "predemo:race": "npm run build",
     "predemo:workers": "npm run build",
-    "predemo:retry": "npm run build"
+    "predemo:retry": "npm run build",
+    "build:test": "tsc -p tsconfig.test.json",
+    "test:integration": "npm run build:test && jest --testMatch \"**/dist-test/test/integration/**/*.test.js\"",
+    "test:e2e": "npm run build:test && jest --testMatch \"**/dist-test/test/e2e/**/*.test.js\"",
+    "test:contract": "npm run build:test && jest --testMatch \"**/dist-test/test/contract/**/*.test.js\"",
+    "verify:provider": "npm run build:test && node dist-test/test/contract/provider.verify.js"
   },
   "license": "ISC",
   "dependencies": {
@@ -46,10 +51,18 @@
     "zod": "^4.6.5"
   },
   "devDependencies": {
+    "@nestjs/testing": "^10.4.22",
+    "@pact-foundation/pact": "^15.0.1",
     "@redocly/cli": "2.46.0",
+    "@testcontainers/postgresql": "^10.28.0",
     "@types/express": "^5.0.6",
+    "@types/jest": "^30.0.0",
     "@types/node": "^26.6.2",
     "@types/pg": "^8.23.1",
+    "@types/supertest": "^7.2.1",
+    "jest": "^30.5.2",
+    "supertest": "^7.3.0",
+    "testcontainers": "^10.28.0",
     "ts-node": "^10.9.2",
     "typescript": "^7.0.2"
   }
