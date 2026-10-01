@@ -23,8 +23,6 @@ async function bootstrap() {
       apiSpec,
       validateRequests: true,
       validateResponses: true,
-      // /health is operational infrastructure, not a Marketplace API
-      // resource — it isn't part of the OpenAPI contract.
       ignorePaths: /^\/health/,
     }),
   );

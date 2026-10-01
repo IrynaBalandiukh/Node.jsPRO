@@ -4,9 +4,9 @@
   "description": "Marketplace API contract (OpenAPI) with runtime validation on the boundary",
   "main": "dist/main.js",
   "scripts": {
-    "build": "tsc -p tsconfig.json",
+    "build": "nest build",
     "start": "npm run build && node dist/main.js",
-    "start:dev": "node --watch -r ts-node/register src/main.ts",
+    "start:dev": "nest start --watch",
     "lint:openapi": "redocly lint openapi/openapi.yaml",
     "bundle:openapi": "redocly bundle openapi/openapi.yaml -o spec.json",
     "check:openapi": "npm run bundle:openapi && node scripts/check-spec.js",
@@ -26,11 +26,12 @@
     "zod": "^4.6.5"
   },
   "devDependencies": {
+    "@nestjs/cli": "^10.4.9",
     "@redocly/cli": "2.46.0",
     "@types/express": "^5.0.6",
     "@types/node": "^26.6.2",
     "@types/pg": "^8.23.1",
     "ts-node": "^10.9.2",
-    "typescript": "^7.0.2"
+    "typescript": "~5.9"
   }
 }
