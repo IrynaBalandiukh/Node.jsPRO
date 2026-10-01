@@ -242,7 +242,7 @@ components:
           type: string
           format: uri-reference
           description: A URI identifying the problem type.
-          example: about:blank
+          example: https://api.example.com/problems/validation-error
         title:
           type: string
           description: Short, human-readable summary of the problem type.
@@ -349,6 +349,7 @@ components:
 
     CreateOrderRequest:
       type: object
+      additionalProperties: false
       required: [items]
       properties:
         items:
@@ -356,6 +357,7 @@ components:
           minItems: 1
           items:
             type: object
+            additionalProperties: false
             required: [product_id, quantity]
             properties:
               product_id:

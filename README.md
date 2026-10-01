@@ -119,6 +119,9 @@ curl -i -X POST http://localhost:3000/orders \
   -d "{\"items\":[]}"
 # detail: "request/body/items must NOT have fewer than 1 items"
 
+# зайве поле -> 400 problem+json (additionalProperties: false)
+curl -i -X POST http://localhost:3000/orders   -H "Content-Type: application/json" -H "Idempotency-Key: k3"   -d "{\"items\":[{\"product_id\":\"prod_1\",\"quantity\":1}],\"coupon\":\"FREE\"}"
+
 # валідний запит -> 201
 curl -i -X POST http://localhost:3000/orders \
   -H "Content-Type: application/json" -H "Idempotency-Key: k2" \
@@ -130,6 +133,8 @@ curl -i -X POST http://localhost:3000/orders \
 ```
 curl http://localhost:3000/products?limit=2
 curl -i http://localhost:3000/products/does-not-exist   # 404 problem+json
+# замовлення з'являється лише після успішного POST /orders вище (порожній старт -> 404);
+# спершу виконайте валідний POST (запит k2), тоді:
 curl http://localhost:3000/orders/order_1
 ```
 

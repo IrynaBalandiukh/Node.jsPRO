@@ -14,6 +14,13 @@ const STATUS_TITLES = {
   500: 'Internal Server Error',
 };
 
+const PROBLEM_TYPES = {
+  400: 'https://api.example.com/problems/validation-error',
+  404: 'https://api.example.com/problems/not-found',
+  422: 'https://api.example.com/problems/idempotency-key-conflict',
+  500: 'https://api.example.com/problems/internal-error',
+};
+
 function createApp() {
   const app = express();
   app.use(express.json());
@@ -84,7 +91,7 @@ function createApp() {
   app.use((err, req, res, next) => {
     const status = err.status || 500;
     res.status(status).type('application/problem+json').json({
-      type: 'about:blank',
+      type: PROBLEM_TYPES[status] || 'about:blank',
       title: STATUS_TITLES[status] || 'Error',
       status,
       detail: err.message || 'Unexpected error',
