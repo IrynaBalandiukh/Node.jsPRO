@@ -10,7 +10,10 @@
     "lint:openapi": "redocly lint openapi/openapi.yaml",
     "bundle:openapi": "redocly bundle openapi/openapi.yaml -o spec.json",
     "check:openapi": "npm run bundle:openapi && node scripts/check-spec.js",
-    "check:env": "npm run build && node scripts/check-env-example.mjs"
+    "check:env": "npm run build && node scripts/check-env-example.mjs",
+    "db:schema": "docker compose exec -T postgres psql -U marketplace_app -d marketplace -v ON_ERROR_STOP=1 < db/schema.sql",
+    "db:seed": "docker compose exec -T postgres psql -U marketplace_app -d marketplace -v ON_ERROR_STOP=1 < db/seed.sql",
+    "db:indexes": "docker compose exec -T postgres psql -U marketplace_app -d marketplace -v ON_ERROR_STOP=1 -1 < db/indexes.sql"
   },
   "license": "ISC",
   "dependencies": {
@@ -23,6 +26,8 @@
     "pg": "^8.23.0",
     "reflect-metadata": "^0.2.2",
     "rxjs": "^7.8.2",
+    "swagger-ui-express": "^5.0.1",
+    "yaml": "^2.8.0",
     "zod": "^4.6.5"
   },
   "devDependencies": {
@@ -30,6 +35,7 @@
     "@types/express": "^5.0.6",
     "@types/node": "^26.6.2",
     "@types/pg": "^8.23.1",
+    "@types/swagger-ui-express": "^4.1.8",
     "ts-node": "^10.9.2",
     "typescript": "^7.0.2"
   }

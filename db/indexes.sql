@@ -1,21 +1,23 @@
--- Marketplace API — мінімальний набір індексів, що лікує всі чотири запити
--- (ДЗ №3 курсового проєкту). Кожен індекс закриває рівно один запит — жоден
--- не лишається мертвим (перевіряється через pg_stat_user_indexes).
+-- Marketplace API — the minimal set of indexes that fixes all four queries
+-- (course project, HW #3). Each index covers exactly one query — none is
+-- left dead (checked via pg_stat_user_indexes).
 --
 --   psql "$DATABASE_URL" -f db/indexes.sql
 --   psql "$DATABASE_URL" -c "ANALYZE;"
 
--- q1: пошук замовлень за власником (buyer_id) + періодом (created_at).
+-- q1: look up orders by owner (buyer_id) + period (created_at).
 CREATE INDEX idx_orders_buyer_created ON orders (buyer_id, created_at);
 
--- q2: панель "замовлення в очікуванні" — тільки status = 'pending', завжди
--- відсортовані за created_at. Partial-індекс: для інших статусів (paid,
--- cancelled) цей індекс узагалі не існує на диску.
+-- q2: "pending orders" dashboard — only status = 'pending', always
+-- sorted by created_at. Partial index: for other statuses (paid,
+-- cancelled) this index does not exist on disk at all.
 CREATE INDEX idx_orders_pending_created ON orders (created_at) WHERE status = 'pending';
 
--- q3: логін за email без урахування регістру. Expression-індекс: WHERE
--- lower(email) = ... не може скористатись звичайним UNIQUE(email).
-CREATE INDEX idx_users_email_lower ON users (lower(email));
+-- q3: case-insensitive login by email. The expression index
+-- idx_users_email_lower (UNIQUE on lower(email)) is declared in db/schema.sql —
+-- it also enforces uniqueness. IF NOT EXISTS makes this a no-op on a normal
+-- setup, and recreates the index if it was dropped (e.g. for the "before" EXPLAIN).
+CREATE UNIQUE INDEX IF NOT EXISTS idx_users_email_lower ON users (lower(email));
 
--- q4: повнотекстовий пошук по каталогу. GIN по tsvector — не B-tree.
+-- q4: full-text search over the catalog. GIN on tsvector — not a B-tree.
 CREATE INDEX idx_products_search_vector ON products USING GIN (search_vector);
