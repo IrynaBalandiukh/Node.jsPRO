@@ -1,19 +1,21 @@
-import { Entity, PrimaryGeneratedColumn, Column, OneToMany, Index, CreateDateColumn, Check } from 'typeorm';
+import { Entity, PrimaryGeneratedColumn, Column, OneToMany, CreateDateColumn, Check } from 'typeorm';
 import { Product } from './product.entity';
 import { Order } from './order.entity';
 
-export type UserRole = 'buyer' | 'seller' | 'admin';
+export type UserRole = 'buyer' | 'seller';
 
-// Матчить db/schema.sql: users (ДЗ №3). Роль перевіряється CHECK-констрейнтом
-// у БД (не тільки TS-типом) — той самий контракт, що й у db/schema.sql.
+// Mirrors db/schema.sql: users. The role is enforced by a CHECK constraint in
+// the database (not only by the TS type), same contract as in db/schema.sql.
 @Entity({ name: 'users' })
-@Check(`"role" IN ('buyer', 'seller', 'admin')`)
+@Check('chk_users_role', `"role" IN ('buyer', 'seller')`)
 export class User {
   @PrimaryGeneratedColumn({ type: 'bigint' })
   id!: string;
 
-  @Index('idx_users_email', { unique: true })
-  @Column({ type: 'text', unique: true })
+  // Uniqueness is enforced by the case-insensitive unique index
+  // idx_users_email_lower (on lower(email)), created in the migration:
+  // @Index cannot express an expression index.
+  @Column({ type: 'text' })
   email!: string;
 
   @Column({ name: 'password_hash', type: 'text' })
@@ -25,11 +27,11 @@ export class User {
   @CreateDateColumn({ name: 'created_at', type: 'timestamptz' })
   createdAt!: Date;
 
-  // 1──n: користувач як продавець своїх товарів.
+  // 1──n: the user as a seller of their products.
   @OneToMany(() => Product, (product) => product.seller)
   products!: Product[];
 
-  // 1──n: користувач як покупець своїх замовлень.
+  // 1──n: the user as a buyer of their orders.
   @OneToMany(() => Order, (order) => order.buyer)
   orders!: Order[];
 }

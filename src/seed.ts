@@ -5,16 +5,13 @@ import { Product } from './entities/product.entity';
 import { Order, OrderStatus } from './entities/order.entity';
 import { OrderItem } from './entities/order-item.entity';
 
-// Детермінований, ідемпотентний seed (ДЗ №13, п.4): фіксовані дані, без
-// random()/Date.now(). Другий запуск не дублює рядки і не падає:
-//  - users дедуплікуються через upsert по email (UNIQUE-констрейнт у схемі);
-//  - products/orders не мають природного unique-ключа в схемі — тому
-//    дедуплікуються на рівні застосунку: "чи вже є рядок з таким
-//    детермінованим маркером" (ім'я товару / created_at замовлення), і
-//    insert пропускається, якщо так;
-//  - order_items ідуть услід за своїм order: якщо order уже існував,
-//    його items наново не створюються (вони були створені разом із ним
-//    при першому запуску).
+// Deterministic, idempotent seed: fixed data, no random()/Date.now(), so a
+// second run neither duplicates rows nor fails.
+//  - users: INSERT ... ON CONFLICT DO NOTHING (unique index on lower(email));
+//  - products/orders have no natural unique key, so a row is skipped if one
+//    with the same deterministic marker (product name / order created_at)
+//    already exists;
+//  - order_items are created together with their order only.
 
 interface SeedUser {
   email: string;
@@ -23,7 +20,6 @@ interface SeedUser {
 }
 
 const SEED_USERS: SeedUser[] = [
-  { email: 'admin@seed.marketplace.dev', passwordHash: 'seed$admin$hash', role: 'admin' },
   { email: 'seller1@seed.marketplace.dev', passwordHash: 'seed$seller1$hash', role: 'seller' },
   { email: 'seller2@seed.marketplace.dev', passwordHash: 'seed$seller2$hash', role: 'seller' },
   { email: 'seller3@seed.marketplace.dev', passwordHash: 'seed$seller3$hash', role: 'seller' },
@@ -130,10 +126,15 @@ const SEED_ORDERS: SeedOrder[] = [
 async function seedUsers(): Promise<Map<string, User>> {
   const repo = AppDataSource.getRepository(User);
 
-  await repo.upsert(
-    SEED_USERS.map((u) => ({ email: u.email, passwordHash: u.passwordHash, role: u.role })),
-    ['email'],
-  );
+  // ON CONFLICT DO NOTHING works with any unique index, including the
+  // expression index on lower(email) that upsert(..., ['email']) cannot target.
+  await repo
+    .createQueryBuilder()
+    .insert()
+    .into(User)
+    .values(SEED_USERS.map((u) => ({ email: u.email, passwordHash: u.passwordHash, role: u.role })))
+    .orIgnore()
+    .execute();
 
   const users = await repo.find({ where: SEED_USERS.map((u) => ({ email: u.email })) });
   const byEmail = new Map(users.map((u) => [u.email, u]));
@@ -183,12 +184,12 @@ async function seedOrders(usersByEmail: Map<string, User>, productsByName: Map<s
     const buyer = usersByEmail.get(o.buyerEmail);
     if (!buyer) throw new Error(`seed: покупець ${o.buyerEmail} не знайдений`);
 
-    const totalAmountCents = o.items.reduce((sum, it) => sum + it.unitPriceCents * it.quantity, 0);
+    const totalCents = String(o.items.reduce((sum, it) => sum + it.unitPriceCents * it.quantity, 0));
 
     const insertResult = await orderRepo.insert({
       buyer: { id: buyer.id },
       status: o.status,
-      totalAmountCents,
+      totalCents,
       createdAt,
     });
     const orderId = insertResult.identifiers[0].id as string;
