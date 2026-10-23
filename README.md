@@ -10,8 +10,7 @@
 
 Marketplace API — платформа, де продавці (`Seller`) виставляють товари на
 продаж, а покупці (`Buyer`) переглядають каталог, оформлюють і оплачують
-замовлення. `Admin` модерує товари й користувачів. Сервіс вирішує дві
-проблеми: координацію обмеженого залишку (`stock`) під конкурентним попитом
+замовлення. Сервіс вирішує дві проблеми: координацію обмеженого залишку (`stock`) під конкурентним попитом
 і гарантію, що кожне замовлення обробляється рівно один раз навіть при
 мережевих повторах запиту (retry з боку клієнта).
 
@@ -25,23 +24,19 @@ Marketplace API — платформа, де продавці (`Seller`) вис�
    представити їх покупцям.
 4. Як `Seller`, я хочу отримувати сповіщення про нове замовлення на свій
    товар, щоб оперативно його обробити.
-5. Як `Admin`, я хочу бачити всі замовлення і мати змогу заблокувати товар
-   або продавця, щоб модерувати платформу.
 
 ## 2. Домен
 
-Сутності стануть ресурсами в OpenAPI (ДЗ#9) і таблицями в схемі (ДЗ#12).
-
-| Сутність | Що зберігає | Ключові звʼязки |
-|---|---|---|
-| `User` | id, email, password_hash, role (`buyer`\|`seller`\|`admin`) | 1──n `Product` (як seller), 1──n `Order` (як buyer), 1──n `Notification` |
-| `Product` | id, seller_id, name, description, price_cents, stock, photos[] | n──1 `User` (seller), n──n `Order` через `OrderItem` |
-| `Order` | id, buyer_id, status (`pending`\|`paid`\|`cancelled`), items, total_cents, created_at | n──1 `User` (buyer), n──n `Product`, 1──1 `Payment` |
-| `Payment` | id, order_id, amount_cents, status (`pending`\|`succeeded`\|`failed`), provider_ref | 1──1 `Order` |
-| `Notification` | id, user_id, type (`order_created`\|`order_paid`\|...), payload, read_at | n──1 `User` |
+| Сутність       | Що зберігає                                                                           | Ключові звʼязки                                                                            |
+| -------------- | ------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------ |
+| `User`         | id, email, password_hash, role (`buyer`\|`seller`)                                    | 1──n `Product` (як seller), 1──n `Order` (як buyer), 1──n `Notification`                   |
+| `Product`      | id, seller_id, name, description, price_cents, stock, photos[]                        | n──1 `User` (seller), n──n `Order` через `OrderItem`                                       |
+| `Order`        | id, buyer_id, status (`pending`\|`paid`\|`cancelled`), items, total_cents, created_at | n──1 `User` (buyer), n──n `Product` через `OrderItem`, 1──1 `Payment`, 1──n `Notification` |
+| `Payment`      | id, order_id, amount_cents, status (`pending`\|`succeeded`\|`failed`), provider_ref   | 1──1 `Order`                                                                               |
+| `Notification` | id, user_id, order_id, type (`order_created`\|`order_paid`\|...), payload, read_at    | n──1 `User`, n──1 `Order`                                                                  |
 
 ```
-User (buyer│seller│admin)
+User (buyer│seller)
   │ 1──n (seller_id)              │ 1──n (buyer_id)
   ▼                                ▼
 Product ──n──n (OrderItem)──n──1─ Order ──1──1── Payment
@@ -49,60 +44,56 @@ Product ──n──n (OrderItem)──n──1─ Order ──1──1── P
                                     └──1──n──▶ Notification ──n──1──▶ User
 ```
 
-> Реалізовано станом на ДЗ №2 (`hw-11`): `Product`, `Order` — in-memory,
-> без бази (`src/products`, `src/orders`). `User`, `Payment`, `Notification`
-> — заплановані сутності, з'являться разом із auth (JWT) і чергою (RabbitMQ)
-> на наступних ДЗ.
+У контракті ДЗ №1 описано лише `Product` і `Order`. `User`, `Payment` і
+`Notification` — заплановані сутності: вони зʼявляться в API та схемі разом
+з автентифікацією, оплатою і чергою (наступні ДЗ).
 
 ### Перевірка домену
 
-| Потрібно | Що це у мене | Де знадобиться | ✓ |
-|---|---|---|---|
-| ≥ 2 ролі з різними правами | `buyer` / `seller` / `admin` (заплановано, auth ще немає) | #24 RBAC | ✅ |
-| Обмежений ресурс, за який конкурують | `Product.stock` — конкурентний декремент при паралельних замовленнях | #14 транзакція під навантаженням | ✅ |
-| Операція з незворотним ефектом | Створення `Order` + `Payment`, вже захищене `Idempotency-Key` (ДЗ №1) | #22 outbox + idempotency | ✅ |
-| Подія, про яку треба сповістити | `order.created` → продавцю, `order.paid` → покупцю | #18 realtime · #19 черга | ✅ |
-| Сутність із файлами | `Product.photos` — фото товару | #26 S3 presigned | ✅ |
-| Дані «часто читають, рідко пишуть» | Каталог `Product` | #23 cache-aside | ✅ |
-| 4–6 сутностей зі звʼязками | `User`, `Product`, `Order`, `Payment`, `Notification` (5) | #12 схема · #13 entities | ✅ |
-
-7/7 — домен витягне курс.
+| Потрібно                             | Що це у мене                                                          | Де знадобиться                   | ✓   |
+| ------------------------------------ | --------------------------------------------------------------------- | -------------------------------- | --- |
+| ≥ 2 ролі з різними правами           | `buyer` / `seller` (заплановано, auth ще немає)                       | #24 RBAC                         | ✅  |
+| Обмежений ресурс, за який конкурують | `Product.stock` — конкурентний декремент при паралельних замовленнях  | #14 транзакція під навантаженням | ✅  |
+| Операція з незворотним ефектом       | Створення `Order` + `Payment`, вже захищене `Idempotency-Key` (ДЗ №1) | #22 outbox + idempotency         | ✅  |
+| Подія, про яку треба сповістити      | `order.created` → продавцю, `order.paid` → покупцю                    | #18 realtime · #19 черга         | ✅  |
+| Сутність із файлами                  | `Product.photos` — фото товару                                        | #26 S3 presigned                 | ✅  |
+| Дані «часто читають, рідко пишуть»   | Каталог `Product`                                                     | #23 cache-aside                  | ✅  |
+| 4–6 сутностей зі звʼязками           | `User`, `Product`, `Order`, `Payment`, `Notification` (5)             | #12 схема · #13 entities         | ✅  |
 
 ## 3. Архітектурні рішення
 
-| Питання | Рішення | Чому саме так |
-|---|---|---|
-| Compute model | Modular monolith (NestJS-модулі) | Соло-розробка на 17 ДЗ; мікросервіси додали б deployment/observability overhead без виграшу на цьому масштабі. Межі модулів (`products/`, `orders/`, майбутні `users/`, `payments/`) навмисно чіткі, щоб виокремити сервіс пізніше, якщо знадобиться. |
-| База даних | PostgreSQL | Потрібні транзакції при декременті `Product.stock` під конкурентним навантаженням (ДЗ#14) — eventual consistency тут коштувала б овербукінгом. |
-| Асинхронність | RabbitMQ | Черга сповіщень (`order.created` → продавцю, `order.paid` → покупцю) потребує надійної доставки «раз і назавжди»; replay подій (Kafka) домену поки не потрібен. |
-| Автентифікація | JWT (access + refresh) | Stateless — кілька інстансів застосунку за балансувальником без спільного session-store. Ціна — складніший миттєвий revoke (див. Trade-offs). |
-| Deploy | Docker Compose (лок.) → Kubernetes (прод) | Compose вже в репо для Postgres; курс вчить K8s, і домен (кілька незалежних модулів, потенційно різне навантаження на каталог і замовлення) виправдовує оркестратор. |
+| Питання        | Рішення                                                                  | Чому саме так                                                                                                                                                                                                                                |
+| -------------- | ------------------------------------------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Compute model  | Modular monolith (NestJS-модулі)                                         | Соло-розробка; мікросервіси додали б deployment/observability overhead без виграшу на цьому масштабі. Межі модулів (`products/`, `orders/`, майбутні `users/`, `payments/`) навмисно чіткі, щоб виокремити сервіс пізніше, якщо знадобиться. |
+| База даних     | PostgreSQL                                                               | Потрібні транзакції при декременті `Product.stock` під конкурентним навантаженням — eventual consistency тут коштувала б овербукінгом.                                                                                                       |
+| Асинхронність  | RabbitMQ                                                                 | Черга сповіщень (`order.created` → продавцю, `order.paid` → покупцю) потребує надійної доставки «раз і назавжди»; replay подій (Kafka) домену поки не потрібен.                                                                              |
+| Автентифікація | JWT (access + refresh)                                                   | Stateless — кілька інстансів застосунку за балансувальником без спільного session-store. Ціна — складніший миттєвий revoke (див. Trade-offs).                                                                                                |
+| Deploy         | Docker Compose (лок. і поки що прод) → Kubernetes (навчальна ціль курсу) | Compose вже в репо для Postgres і цілком достатній для реального навантаження цього проєкту. Kubernetes додано як навчальну ціль курсу (розгортання кількох інстансів, health-проби, секрети); сам домен на цьому масштабі його не вимагає.  |
 
 **Де мені знадобляться транзакції:** декремент `Product.stock` під час
 створення `Order` (щоб уникнути overselling при паралельних покупках) і
 атомарна зміна `Order.status → paid` разом зі створенням `Payment`.
 
 **Яка подія піде через чергу першою:** `order.created` → сповіщення
-продавцю. Оскільки `Idempotency-Key` вже гарантує, що замовлення
-створюється рівно один раз, подія публікується так само рівно один раз на
-унікальне замовлення.
+продавцю. `Idempotency-Key` гарантує, що замовлення створюється один раз.
+Щоб подія не загубилась між записом у базу і відправкою в RabbitMQ, вона
+записується в таблицю outbox у тій самій транзакції, що й замовлення, а окремий процес доставляє її в чергу. Доставка — «принаймні один
+раз», тому споживач ігнорує дублікати за `id` події.
 
 **Ролі та їхні права:**
 
 - `buyer` — перегляд каталогу, створення власних замовлень, оплата.
 - `seller` — CRUD власних товарів (тільки `seller_id === user.id`),
   перегляд замовлень на свої товари.
-- `admin` — перегляд і модерація всіх товарів і замовлень, блокування
-  користувача чи товару.
 
-## 4. Trade-offs — що я свідомо НЕ роблю
+## 4. Trade-offs
 
-| Відкинув | Чому | За яких умов повернувся б |
-|---|---|---|
-| Мікросервіси зараз | Соло-розробка; overhead деплою й спостережуваності не виправданий на цьому масштабі | Якщо читання каталогу і запис замовлень почнуть вимагати незалежного масштабування (різні профілі навантаження) |
-| NoSQL (MongoDB) для каталогу | Потрібні транзакції та foreign keys (`Order`↔`Product`↔`Payment`), а не гнучка схема | Якщо товари матимуть дуже різнорідні атрибути за категоріями (довільні поля) |
-| Sessions замість JWT | JWT дає stateless горизонтальне масштабування без спільного session-store | Якщо знадобиться миттєвий примусовий revoke (бан користувача має діяти негайно) — тоді додам blacklist у Redis |
-| Kafka замість RabbitMQ | Домену поки не потрібен replay подій чи event sourcing — лише надійна доставка «одна подія → одна дія» | Якщо зʼявиться потреба в audit log/аналітиці на основі повної історії подій замовлення |
+| Відкинув                     | Чому                                                                                                   | За яких умов повернувся б                                                                                       |
+| ---------------------------- | ------------------------------------------------------------------------------------------------------ | --------------------------------------------------------------------------------------------------------------- |
+| Мікросервіси зараз           | Соло-розробка; overhead деплою й спостережуваності не виправданий на цьому масштабі                    | Якщо читання каталогу і запис замовлень почнуть вимагати незалежного масштабування (різні профілі навантаження) |
+| NoSQL (MongoDB) для каталогу | Потрібні транзакції та foreign keys (`Order`↔`Product`↔`Payment`), а не гнучка схема                   | Якщо товари матимуть дуже різнорідні атрибути за категоріями (довільні поля)                                    |
+| Sessions замість JWT         | JWT дає stateless горизонтальне масштабування без спільного session-store                              | Якщо знадобиться миттєвий примусовий revoke (бан користувача має діяти негайно) — тоді додам blacklist у Redis  |
+| Kafka замість RabbitMQ       | Домену поки не потрібен replay подій чи event sourcing — лише надійна доставка «одна подія → одна дія» | Якщо зʼявиться потреба в audit log/аналітиці на основі повної історії подій замовлення                          |
 
 **Найбільший ризик мого вибору:** один Postgres-інстанс під усім
 навантаженням модульного моноліту — конкурентні декременти `stock` під час
@@ -111,14 +102,41 @@ Product ──n──n (OrderItem)──n──1─ Order ──1──1── P
 
 **Як я помічу, що помилився:** зростання p95 latency `GET /products`
 корелює з навантаженням на `POST /orders` (моніторинг per-endpoint latency
-+ Postgres connection pool usage) — сигнал, що читання каталогу варто
+\+ Postgres connection pool usage) — сигнал, що читання каталогу варто
 виокремити (репліка на читання або окремий сервіс).
+
+---
+
+## Запуск
+
+_(буде описано пізніше)_
+
+## Структура файлів
+
+```
+src/            — код застосунку (NestJS, TypeScript)
+openapi/        — OpenAPI-спека (openapi.yaml): контракт API
+db/             — SQL дата-шару: init.sql (роль застосунку), schema.sql, seed.sql,
+                  indexes.sql,
+                  queries/ (q1–q4) і OPTIMIZATIONS.md (звіт EXPLAIN)
+scripts/        — допоміжні скрипти: check-spec.js (спека),
+                  check-env-example.mjs (.env.example проти схеми),
+                  rotate.sh (ротація пароля БД без рестарту застосунку)
+pacts/          — поки порожня (під контрактні тести)
+dist/           — результат збірки (npm run build); у .gitignore
+Dockerfile      — образ застосунку
+docker-compose.yml — Postgres для локального запуску
+.env.example    — контракт змінних середовища (реальний .env — у .gitignore)
+package.json    — залежності та npm-скрипти
+tsconfig.json   — налаштування TypeScript
+README.md       — цей документ
+```
 
 ---
 
 ## Журнал рішень
 
-### 2026-09-20 (ДЗ №2, `hw-11`)
+### 2026-09-20
 
 Було: Express (написаний на ДЗ №1). Стало: NestJS + TypeScript.
 
@@ -128,11 +146,11 @@ Product ──n──n (OrderItem)──n──1─ Order ──1──1── P
 
 ### 2026-09-22 (ДЗ №4, `hw-13`)
 
-Було: raw-SQL схема з ДЗ №3 (`db/`), гроші — `numeric(10,2)`/`numeric(12,2)`.
-Стало: та сама схема — entities + relations + міграції TypeORM
-(`src/entities/`, `src/migrations/`), гроші — `integer` у мінорних
-одиницях (`*_cents`), як цього прямо вимагає умова ДЗ №13. Деталі й
-обґрунтування — розділ [TypeORM-шар (ДЗ №4)](#typeorm-шар-дз-4).
+Було: raw-SQL схема з ДЗ №3 (`db/`). Стало: та сама схема — entities +
+relations + міграції TypeORM (`src/entities/`, `src/migrations/`). Гроші вже
+були `integer` у мінорних одиницях (`*_cents`) у `db/schema.sql`, тож тут
+нічого не змінилось. Деталі й обґрунтування — розділ
+[TypeORM-шар (ДЗ №4)](#typeorm-шар-дз-4).
 
 Секрети (`scripts/with-secrets.sh`): умова ДЗ №13 припускає, що ця
 обгортка вже існує з ДЗ №11 — але фактичний ДЗ №11 у цьому репо пішов
@@ -144,217 +162,166 @@ Product ──n──n (OrderItem)──n──1─ Order ──1──1── P
 (`infisical run`), `SKIP_VAULT=1` лишається аварійним входом для грейдера
 (п.8 умови), а не основним способом роботи.
 
+### 2026-10-22
+
+Було: три ролі — `buyer`, `seller`, `admin` (user story №5: модерація,
+блокування товару чи продавця). Стало: дві ролі — `buyer` і `seller`.
+
+Причина: спрощення домену. Модерація потребувала б додаткових полів
+(блокування користувача/товару) і окремих прав, які зараз не потрібні
+жодній user story. Вимога «≥ 2 ролі з різними правами» лишається виконаною.
+Спочатку змінено лише README; `db/schema.sql` і `db/seed.sql` вирівняно
+в ДЗ №3 (роль `admin` прибрано, у `users.role` лишились `buyer` і `seller`).
+
 ---
 
 ## Реалізація
 
-Технічні деталі того, що вже зроблено по кожному ДЗ курсового.
+### ДЗ №1 — OpenAPI-контракт
 
-- ДЗ №1 (`hw-09`): OpenAPI-контракт (`/products`, `/orders`) і рантайм-валідація
-  на кордоні — **варіант Б**.
-- ДЗ №2 (`hw-11`): конфігурація застосунку — zod-схема з fail-fast, `.env.example`,
-  секрети поза git/образом, ротація пароля БД без рестарту. Деталі — розділ
-  [Configuration](#configuration) нижче.
-- ДЗ №3 (`hw-12`): дата-шар — схема (`db/schema.sql`), seed на 100 000+ рядків
-  (`db/seed.sql`), 4 повільні запити з доказом прискорення через індекси
-  (`db/queries/`, `db/indexes.sql`, `db/OPTIMIZATIONS.md`), включно з
-  повнотекстовим пошуком по каталогу (GIN по `tsvector`). Деталі — розділ
-  [Дата-шар (ДЗ №3)](#дата-шар-дз-3) нижче.
-- ДЗ №4 (`hw-13`): та сама схема — тепер через TypeORM. Entities + relations
-  (`src/entities/`), міграції замість `synchronize` (`src/migrations/`),
-  ідемпотентний seed (`src/seed.ts`), N+1 доведено й вилікувано
-  (`src/demo-nplus1.ts`), звіт через `QueryBuilder` (`src/report.ts`).
-  Деталі — розділ [TypeORM-шар (ДЗ №4)](#typeorm-шар-дз-4) нижче.
+**Що зроблено.** Описано контракт Marketplace API в `openapi/openapi.yaml`:
+2 ресурси (`products`, `orders`) і 5 операцій (список і картка товару,
+список замовлень, створення замовлення, картка замовлення). У контракті є
+cursor-пагінація (`limit`, `cursor`, `next_cursor`), обовʼязковий заголовок
+`Idempotency-Key` для `POST /orders` (з описом семантики повтору) і помилки
+у форматі `application/problem+json`.
 
-### Обраний варіант (ДЗ №1, частина 5)
+У контракті поки лише `Product` і `Order`; решта сутностей домену
+(`User`, `Payment`, `Notification`) — заплановані.
 
-**Варіант Б: `express-openapi-validator`.**
+**Обраний варіант: Б** — сервер із `express-openapi-validator`. Він
+підвантажує спеку і сам відхиляє запити й відповіді, що їй суперечать.
 
-Застосунок (`src/`) підвантажує `openapi/openapi.yaml` і валідує кожен запит
-та кожну відповідь проти спеки (`validateRequests: true`,
-`validateResponses: true`). Помилки валідатора (`src/common/openapi-error-handler.ts`)
-та власні помилки бізнес-логіки, що виникають у контролерах Nest
-(`src/common/all-exceptions.filter.ts`), перетворюються у
-`application/problem+json` з полями `type/title/status/detail/instance`.
-
-Дані — in-memory (`ProductsService`, `OrdersService`), без бази.
-
-### Структура
+**Команди перевірки** (після `npm install`):
 
 ```
-openapi/openapi.yaml         # спека: 2 ресурси, 5 операцій, cursor-пагінація,
-                              # Idempotency-Key, problem+json
-src/
-  main.ts                    # bootstrap: express-openapi-validator middleware + global filters
-  app.module.ts
-  config/
-    env.schema.ts               # zod-схема process.env + validate() (fail-fast)
-  database/
-    database.service.ts         # pg.Pool, пароль — функція, що перечитує secrets/db_password
-    database.module.ts
-  health/
-    health.controller.ts        # GET /health — реальний SELECT 1 + uptime
-    health.module.ts
-  products/
-    products.controller.ts
-    products.service.ts        # in-memory каталог
-    products.module.ts
-  orders/
-    orders.controller.ts       # включно з Idempotency-Key семантикою
-    orders.service.ts          # in-memory замовлення + idempotency-store
-    orders.module.ts
-  common/
-    types.ts                   # Product/Order/OrderItem
-    errors.ts                  # HttpError-підкласи (400/404/422)
-    pagination.ts               # opaque cursor (base64) encode/decode
-    problem-json.ts             # спільний форматер application/problem+json
-    all-exceptions.filter.ts    # Nest ExceptionFilter — помилки контролерів/сервісів
-    openapi-error-handler.ts    # Express error-middleware — помилки express-openapi-validator
-scripts/
-  check-spec.js               # перевірка обсягу OpenAPI-спеки
-  check-env-example.mjs       # звірка .env.example зі схемою (check:env)
-.env.example                 # контракт змінних середовища (реальний .env — у .gitignore)
-secrets/db_password           # файл-секрет пароля БД (у .gitignore)
-rotate.sh                    # ротація пароля БД без рестарту застосунку
-docker-compose.yml            # Postgres для локального запуску
-Dockerfile / .dockerignore    # образ без секретів у шарах
+npm run lint:openapi     # спека валідна (exit code 0)
+npm run check:openapi    # обсяг спеки: операцій ≥ 5, ресурсів ≥ 2,
+                         # Idempotency-Key required, опис ≥ 40 символів
+npm start                # запуск сервера (потрібен .env — див. Configuration)
 ```
 
-### Встановлення
+Contract-частина (в іншому терміналі, після `npm start`):
 
 ```
-npm install
+# без Idempotency-Key -> 400 problem+json
+curl -i -X POST http://localhost:3000/orders \
+  -H "Content-Type: application/json" \
+  -d "{\"items\":[{\"product_id\":\"prod_1\",\"quantity\":1}]}"
+
+# порожні items -> 400 problem+json
+curl -i -X POST http://localhost:3000/orders \
+  -H "Content-Type: application/json" -H "Idempotency-Key: k1" \
+  -d "{\"items\":[]}"
+
+# валідний запит -> 201
+curl -i -X POST http://localhost:3000/orders \
+  -H "Content-Type: application/json" -H "Idempotency-Key: k2" \
+  -d "{\"items\":[{\"product_id\":\"prod_1\",\"quantity\":1}]}"
 ```
 
-### Configuration
+### ДЗ 2 - Configuration
 
-Усі змінні середовища описані однією zod-схемою (`src/config/env.schema.ts`) і
-перевіряються на старті через `ConfigModule.forRoot({ validate })` — до того,
-як Nest почне будувати DI-граф. Якщо змінної немає або вона невалідна, процес
-одразу завершується (`process.exit(1)`) зі списком **усіх** зламаних змінних
-одразу, а не по одній. У коді немає жодного прямого читання `process.env` —
-тільки типізований `ConfigService<Env, true>`.
+Усі змінні середовища описані однією zod-схемою
+(`src/config/env.schema.ts`) і перевіряються на старті через
+`ConfigModule.forRoot({ validate })`. Якщо змінної немає або вона невалідна,
+процес одразу завершується з кодом 1 і виводить **усі** зламані змінні разом
+із причиною. У коді немає прямих читань `process.env`: конфіг береться тільки
+через типізований `ConfigService<Env, true>`.
 
 #### Змінні середовища
 
-| Змінна | Обов'язкова | Default | Джерело | Призначення |
-|---|---|---|---|---|
-| `NODE_ENV` | ні | `development` | сховище ДЗ №2/#11: `.env` (dev) / оточення оркестрації (prod) | `development` \| `production` \| `test` |
-| `PORT` | ні | `3000` | сховище ДЗ №2/#11: `.env` (dev) / оточення оркестрації (prod) | HTTP-порт застосунку |
-| `DB_HOST` | так | — | сховище ДЗ №2/#11: `.env` (dev) / оточення оркестрації (prod) | Хост Postgres |
-| `DB_PORT` | ні | `5432` | сховище ДЗ №2/#11: `.env` (dev) / оточення оркестрації (prod) | Порт Postgres |
-| `DB_NAME` | так | — | сховище ДЗ №2/#11: `.env` (dev) / оточення оркестрації (prod) | Назва бази |
-| `DB_USER` | так | — | сховище ДЗ №2/#11: `.env` (dev) / оточення оркестрації (prod) | Роль Postgres |
-| `DB_PASSWORD_FILE` | так | — | сховище ДЗ №2/#11: `.env` (dev) / оточення оркестрації (prod) | Шлях до файлу з паролем (не сам пароль!) |
-| `DATABASE_URL` | так | — | **сховище ДЗ №2/#11:** `.env` (dev; контракт і фейковий пароль — у `.env.example`) / секрети оркестрації (prod). Окремого env-файлу під нього немає | Один рядок підключення до бази ДЗ №3 — для `psql`/тулінгу. Сам застосунок його не використовує — він підключається через `DB_HOST`+... вище (це і дає ротацію пароля без рестарту) |
+| Змінна             | Обовʼязкова | Default       | Призначення                                                                    | Джерело                                                                                                                                             |
+| ------------------ | ----------- | ------------- | ------------------------------------------------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `NODE_ENV`         | ні          | `development` | `development` \| `production` \| `test`                                        | сховище ДЗ №2/#11: `.env` (dev) / оточення оркестрації (prod)                                                                                       |
+| `PORT`             | ні          | `3000`        | HTTP-порт застосунку                                                           | сховище ДЗ №2/#11: `.env` (dev) / оточення оркестрації (prod)                                                                                       |
+| `DB_HOST`          | так         | —             | Хост Postgres                                                                  | сховище ДЗ №2/#11: `.env` (dev) / оточення оркестрації (prod)                                                                                       |
+| `DB_PORT`          | ні          | `5432`        | Порт Postgres                                                                  | сховище ДЗ №2/#11: `.env` (dev) / оточення оркестрації (prod)                                                                                       |
+| `DB_NAME`          | так         | —             | Назва бази                                                                     | сховище ДЗ №2/#11: `.env` (dev) / оточення оркестрації (prod)                                                                                       |
+| `DB_USER`          | так         | —             | Роль Postgres, під якою підключається застосунок                               | сховище ДЗ №2/#11: `.env` (dev) / оточення оркестрації (prod)                                                                                       |
+| `DB_PASSWORD_FILE` | так         | —             | Шлях до файлу з паролем (не сам пароль!)                                       | сховище ДЗ №2/#11: `.env` (dev) / оточення оркестрації (prod)                                                                                       |
+| `DATABASE_URL`     | так         | —             | Один рядок підключення для `psql` і інструментів. Сам застосунок його не читає | **сховище ДЗ №2/#11:** `.env` (dev; контракт і фейковий пароль — у `.env.example`) / секрети оркестрації (prod). Окремого env-файлу під нього немає |
 
-Реальний пароль ніколи не живе в env — лише шлях до файлу-секрету
-(`secrets/db_password`, поза git). `pg.Pool` отримує пароль через функцію,
-яка перечитує цей файл на кожне **нове** з'єднання (`src/database/database.service.ts`) —
-це і робить ротацію без рестарту можливою.
+Контракт змінних — файл `.env.example` (у git, з фейковими значеннями).
+Реальний `.env` і тека `secrets/` — в `.gitignore` та `.dockerignore`, тобто
+не потрапляють ні в git, ні в Docker-образ. Перевірити, що `.env.example` не
+відстав від схеми: `npm run check:env` (exit 1, якщо відстав).
 
 #### Локальний запуск
 
 ```
-cp .env.example .env          # підлаштуй значення під себе
-docker compose up -d          # піднімає Postgres (POSTGRES_USER/PASSWORD/DB
-                               # мають збігатись зі значенням у secrets/db_password)
-npm start                     # build + node dist/main.js
+npm install
+copy .env.example .env          # у bash: cp .env.example .env
+mkdir secrets
+echo changeme_local_dev_password> secrets/db_password
+docker compose up -d --wait postgres   # Postgres; db/init.sql створює роль marketplace_app
+npm start
 ```
 
-`npm run check:env` — звіряє `.env.example` зі схемою (падає з exit 1, якщо
-файл відстав від схеми).
+Пароль у `secrets/db_password` має збігатися зі стартовим паролем з
+`db/init.sql` і з паролем у `DATABASE_URL`. Перевірка:
+`curl http://localhost:3000/health`. Документація API (Swagger UI) —
+`http://localhost:3000/docs`.
 
 #### Ротація пароля БД (без рестарту застосунку)
 
-```
-curl http://localhost:3000/health      # запам'ятай uptime
-bash rotate.sh                         # ALTER ROLE -> оновлює secrets/db_password -> pg_terminate_backend
-curl http://localhost:3000/health      # 200, uptime БІЛЬШИЙ за попередній — процес не перезапускався
-```
+Застосунок читає пароль із файлу `DB_PASSWORD_FILE` на кожне нове зʼєднання з
+базою, а не один раз на старті, тому пароль можна змінити, не перезапускаючи
+сервіс. З кореня проєкту (Postgres має працювати в compose):
 
-Що відбувається всередині `rotate.sh`, у порядку виконання:
+1. `curl http://localhost:3000/health` — запамʼятай `uptime`.
+2. `bash scripts/rotate.sh` (або `bash scripts/rotate.sh <новий_пароль>`).
+   Скрипт по черзі: змінює пароль ролі в Postgres (`ALTER ROLE`), записує його
+   в `secrets/db_password`, закриває старі зʼєднання (`pg_terminate_backend`)
+   і оновлює пароль у `DATABASE_URL` у `.env`.
+3. `curl http://localhost:3000/health` — відповідь `200`, а `uptime` більший за
+   попередній: процес не перезапускався.
 
-1. `ALTER ROLE ... WITH PASSWORD` — новий пароль одразу дійсний у Postgres.
-2. Файл `secrets/db_password` оновлюється **одразу після** цього — з цього
-   моменту нові з'єднання пулу читають новий пароль (старі — ще працюють на
-   вже встановлених з'єднаннях, авторизація там уже відбулась раніше).
-3. `pg_terminate_backend(...)` розриває старі з'єднання, змушуючи пул
-   відкрити нові — саме вони й перечитають оновлений файл.
+Після `docker compose down -v` Postgres повертається до стартового пароля з
+`db/init.sql`, тож поверни `secrets/db_password` до цього значення, інакше
+буде `password authentication failed`.
 
-Пул підписаний на `pool.on('error', ...)`: коли Postgres розриває з'єднання
-командою адміністратора, пул емітить `'error'` — без обробника процес впав би
-з необробленим винятком. Це очікувана частина механізму ротації, не баг.
+### ДЗ 3 - База даних
 
-**Пастка, про яку варто пам'ятати:** `docker-compose.yml` задає стартовий
-пароль Postgres (`POSTGRES_PASSWORD`), який має збігатись зі стартовим вмістом
-`secrets/db_password`. Після `docker compose down -v` (скидання volume)
-Postgres повертається до цього стартового пароля, а файл `secrets/db_password`
-лишається з ротованим значенням від попереднього тесту. Якщо після цього
-застосунок не може підключитись (`password authentication failed`) — поверни
-`secrets/db_password` до стартового значення вручну.
-
-#### Секрети поза git і поза Docker-образом
+Підняти базу (один рядок; на свіжому клоні без правок файлів, дев-креденшели
+лежать у `docker-compose.yml` і `db/init.sql`):
 
 ```
-git check-ignore .env                              # -> .env
-docker build -t myapp .
-docker run --rm myapp ls -a /app                    # є .env.example, немає .env і secrets/
-docker run --rm myapp sh -c 'cat /app/.env'; echo $? # No such file or directory, exit 1
-docker inspect --format '{{.Config.Env}}' myapp     # лише PATH/NODE_VERSION/YARN_VERSION базового образу
-docker history --no-trunc myapp | grep -i password  # порожньо
+docker compose up -d --wait postgres
 ```
 
-## Дата-шар (ДЗ №3)
-
-Схема, seed на реалістичний обсяг і докази прискорення чотирьох запитів
-через індекси — усе в `db/`. Головна таблиця (для обсягу ≥100 000):
-**`orders`**. Таблиця, по якій шукає q4 (повнотекстовий пошук): **`products`**
-(теж ≥100 000).
-
-```
-db/schema.sql          # users, products (+ генерована search_vector), orders, order_items
-db/seed.sql             # >=100k orders, >=100k products, перекошені розподіли, VACUUM (ANALYZE)
-db/queries/q1.sql       # orders за buyer_id + період
-db/queries/q2.sql       # orders зі status = 'pending'
-db/queries/q3.sql       # users за lower(email) — логін без регістру
-db/queries/q4.sql       # повнотекстовий пошук products (plainto_tsquery)
-db/indexes.sql           # 4 індекси — по одному на запит, включно з GIN
-db/OPTIMIZATIONS.md      # EXPLAIN до/після на всі 4 + секція "Морфологія"
-```
-
-**Підняти базу** (свіжий клон, без правок файлів):
-
-```
-docker compose up -d --wait
-```
-
-**Підключитись:**
+Підключитись (один рядок):
 
 ```
 docker compose exec postgres psql -U marketplace_app -d marketplace
 ```
 
-(дефолтні дев-креденшели контейнера лежать прямо в `docker-compose.yml`;
-окремого `secrets/db_password.example` не потрібно. Це окремий шлях для
-локального стенда/грейдера зі свіжого клона — він не є джерелом
-`DATABASE_URL`: застосунок бере підключення зі сховища, див. таблицю
-[Configuration](#configuration).)
-
-Повний цикл перевірки (той самий, який виконує грейдер):
+Створити схему, наповнити даними й додати індекси (у цьому порядку):
 
 ```
-docker compose down -v && docker compose up -d --wait
-psql "$DATABASE_URL" -f db/schema.sql
-psql "$DATABASE_URL" -f db/seed.sql
-psql "$DATABASE_URL" -c "EXPLAIN (ANALYZE, BUFFERS) $(cat db/queries/q1.sql)"   # ...і так для q2, q3, q4 — має бути Seq Scan
-psql "$DATABASE_URL" -f db/indexes.sql
-psql "$DATABASE_URL" -c "ANALYZE;"
-psql "$DATABASE_URL" -c "EXPLAIN (ANALYZE, BUFFERS) $(cat db/queries/q1.sql)"   # ...і так для q2, q3, q4 — Seq Scan має зникнути
+npm run db:schema
+npm run db:seed
+npm run db:indexes
+docker compose exec postgres psql -U marketplace_app -d marketplace -c "ANALYZE;"
 ```
 
-Деталі — усі 4 пари EXPLAIN до/після, пояснення і секція «Морфологія» — у
-[`db/OPTIMIZATIONS.md`](db/OPTIMIZATIONS.md).
+`ANALYZE` після індексів оновлює статистику, щоб планувальник одразу
+використовував нові індекси.
+
+Запити для замірів лежать у `db/queries/` (q1–q4). Запустити один із них
+(Git Bash):
+
+```
+(echo "EXPLAIN (ANALYZE, BUFFERS)"; cat db/queries/q1.sql; echo ";") | docker compose exec -T postgres psql -U marketplace_app -d marketplace
+```
+
+Результати «до» і «після» індексів, пояснення та розділ про морфологію —
+у [`db/OPTIMIZATIONS.md`](db/OPTIMIZATIONS.md).
+
+Головна таблиця — `orders` (110 000 рядків), таблиця, по якій шукає q4, —
+`products` (120 000 рядків).
+
+---
 
 ## TypeORM-шар (ДЗ №4)
 
@@ -379,14 +346,14 @@ src/report.ts                 # звіт через createQueryBuilder().getRawM
 scripts/with-secrets.sh        # обгортка над vault (Infisical) для команд, що ходять у базу
 ```
 
-### Свідомий редизайн проти db/schema.sql (ДЗ №3)
+### Відмінності від db/schema.sql (ДЗ №3)
 
-Гроші — `integer` у мінорних одиницях (`price_cents`, `total_amount_cents`,
-`unit_price_cents`), не `numeric`/`float`, як цього прямо вимагає ДЗ №13
-(і як домен уже описував їх у розділі [2. Домен](#2-домен) —
-`price_cents`/`total_cents` там були задекларовані ще на ДЗ №0). `PRIMARY
-KEY` — `bigint` (значення повертаються як `string` у TS, щоб не впертися в
-межу `Number` на великих ID/агрегатах).
+Гроші — `integer` у мінорних одиницях (`price_cents`, `unit_price_cents`),
+так само як у `db/schema.sql`. Суму замовлення entity зберігає як
+`total_amount_cents` (`integer`), а `db/schema.sql` — як `total_cents`
+(`bigint`). `PRIMARY KEY` — `bigint`
+(значення повертаються як `string` у TS, щоб не впертися в межу `Number` на
+великих ID/агрегатах).
 
 `search_vector` (generated `tsvector` + GIN, ДЗ №3) у TypeORM-шар свідомо не
 перенесений: повнотекстовий пошук не входить у задачі relations/N+1/report
@@ -591,215 +558,3 @@ node -e "const s=require('./package.json').scripts;const bad=['migrate','seed']
 ідемпотентність seed — числа й команда перевірки вище, у розділах
 [N+1 — доведено і вилікувано](#n1--доведено-і-вилікувано) та
 [Seed](#seed).
-
-### Перевірки — ДЗ №1 (acceptance criteria)
-
-Усі команди нижче виконуються після `npm install`, без ручних кроків.
-
-#### 1. Спека валідна
-
-```
-npx @redocly/cli lint openapi/openapi.yaml
-```
-
-Очікується exit code 0 (дозволені лише warnings). У спеці є `security: []` на
-корені саме для правила `security-defined`.
-
-#### 2. Обсяг спеки: ≥2 ресурси, ≥5 операцій, Idempotency-Key required + опис ≥40 символів
-
-```
-npx @redocly/cli bundle openapi/openapi.yaml -o spec.json
-node -e "const s=require('./spec.json'),M=['get','post','put','patch','delete'];\
-const ops=Object.entries(s.paths).flatMap(([p,v])=>Object.keys(v).filter(m=>M.includes(m)).map(m=>[p,m]));\
-const idem=ops.flatMap(([p,m])=>s.paths[p][m].parameters??[]).find(x=>x.in==='header'&&/idempotency-key/i.test(x.name));\
-console.log('операцій:',ops.length,'· ресурсів:',new Set(Object.keys(s.paths).map(p=>p.split('/')[1])).size);\
-console.log('Idempotency-Key: required =',idem?.required,'· опис, символів =',(idem?.description??'').trim().length)"
-```
-
-Або коротко: `npm run check:openapi` (робить те саме через `scripts/check-spec.js`).
-
-Фактичний результат: `операцій: 5 · ресурсів: 2` · `required = true` · `опис, символів = 373`.
-
-#### 3. Idempotency-Key задекларовано
-
-```
-grep -c "Idempotency-Key" openapi/openapi.yaml
-```
-
-`≥ 1` (header-параметр на `POST /orders`, `required: true`, з описом семантики
-повтору того самого ключа + тіла).
-
-#### 4. Cursor-пагінація в контракті
-
-```
-grep -c "next_cursor" openapi/openapi.yaml
-```
-
-`≥ 1`. `GET /products` і `GET /orders` мають query-параметри `limit`/`cursor`,
-відповідь — `{ items, next_cursor }`, `next_cursor` — `nullable`.
-
-#### 5. problem+json скрізь у помилках
-
-```
-grep -c "application/problem+json" openapi/openapi.yaml
-```
-
-`≥ 2`. Схема `Problem` у `components.schemas` з обов'язковими
-`type/title/status/detail/instance`.
-
-#### 6. Contract-частина (варіант Б) — сервер справді відхиляє все, що суперечить спеці
-
-```
-npm start
-```
-
-В іншому терміналі:
-
-```
-# без Idempotency-Key -> 400 problem+json
-curl -i -X POST http://localhost:3000/orders \
-  -H "Content-Type: application/json" \
-  -d "{\"items\":[{\"product_id\":\"prod_1\",\"quantity\":1}]}"
-# detail: "request/headers must have required property 'idempotency-key'"
-
-# порожні items -> 400 problem+json
-curl -i -X POST http://localhost:3000/orders \
-  -H "Content-Type: application/json" -H "Idempotency-Key: k1" \
-  -d "{\"items\":[]}"
-# detail: "request/body/items must NOT have fewer than 1 items"
-
-# валідний запит -> 201
-curl -i -X POST http://localhost:3000/orders \
-  -H "Content-Type: application/json" -H "Idempotency-Key: k2" \
-  -d "{\"items\":[{\"product_id\":\"prod_1\",\"quantity\":1}]}"
-```
-
-Додатково (список і карточка ресурсу):
-
-```
-curl http://localhost:3000/products?limit=2
-curl -i http://localhost:3000/products/does-not-exist   # 404 problem+json
-curl http://localhost:3000/orders/order_1
-```
-
-### Додатковий виклик (реалізовано, без балів)
-
-Повна семантика `Idempotency-Key`:
-
-```
-# повтор того самого ключа + того самого тіла -> той самий 201 + Idempotency-Replay: true
-curl -i -X POST http://localhost:3000/orders \
-  -H "Content-Type: application/json" -H "Idempotency-Key: k2" \
-  -d "{\"items\":[{\"product_id\":\"prod_1\",\"quantity\":1}]}"
-
-# той самий ключ, інше тіло -> 422 problem+json
-curl -i -X POST http://localhost:3000/orders \
-  -H "Content-Type: application/json" -H "Idempotency-Key: k2" \
-  -d "{\"items\":[{\"product_id\":\"prod_2\",\"quantity\":1}]}"
-```
-
-Реалізація — `idempotencyStore` (Map) у `OrdersService` (`src/orders/orders.service.ts`):
-ключ + sha256-хеш тіла запиту; той самий ключ+хеш повертає збережену відповідь
-із заголовком `Idempotency-Replay: true`; той самий ключ з іншим хешем -> `422`
-з `UnprocessableEntityError`.
-
-### Перевірки — ДЗ №2 (acceptance criteria)
-
-#### 1. Fail-fast без обов'язкової змінної
-
-```
-mv .env /tmp
-env -u DB_HOST npm run start
-echo $?
-mv /tmp/.env .
-```
-
-Процес завершується з exit code ≠ 0, у виводі — назва зламаної змінної
-(`DB_HOST`) і причина.
-
-#### 2. `.env.example` синхронний зі схемою
-
-```
-npm run check:env          # exit 0
-# видалити рядок з .env.example, повторити
-npm run check:env          # exit 1
-```
-
-#### 3. Секрет не в git
-
-```
-git check-ignore .env                                   # -> .env
-git status --ignored --porcelain | grep -E '^!! .*\.env$' # знаходить рядок
-git ls-files | grep -c '\.env$'                          # 0
-```
-
-#### 4. Секрет не в Docker-образі
-
-```
-docker build -t myapp .
-docker run --rm myapp ls -a /app
-docker run --rm myapp sh -c 'cat /app/.env'
-docker inspect --format '{{.Config.Env}}' myapp
-docker history --no-trunc myapp | grep -i password
-```
-
-Деталі очікуваного результату кожної команди — у розділі
-[Configuration](#configuration) вище.
-
-#### 5. Ротація без рестарту
-
-```
-docker compose up -d
-npm start
-curl http://localhost:3000/health
-bash rotate.sh
-curl http://localhost:3000/health
-```
-
-`uptime` у другому виклику — більший за перший; процес не перезапускався.
-
-### Перевірки — ДЗ №3 (acceptance criteria)
-
-Повний цикл — див. [Дата-шар (ДЗ №3)](#дата-шар-дз-3) вище. Точкові
-перевірки:
-
-```
-# схема + FK
-psql "$DATABASE_URL" -f db/schema.sql
-psql "$DATABASE_URL" -Atc "SELECT count(*) FROM information_schema.table_constraints WHERE constraint_type='FOREIGN KEY' AND table_schema='public';"   # >= 3
-
-# обсяг
-psql "$DATABASE_URL" -f db/seed.sql
-psql "$DATABASE_URL" -Atc "SELECT count(*) FROM orders;"     # >= 100000
-psql "$DATABASE_URL" -Atc "SELECT count(*) FROM products;"   # >= 100000
-
-# після індексів: жоден не мертвий
-psql "$DATABASE_URL" -f db/indexes.sql && psql "$DATABASE_URL" -c "ANALYZE;"
-# ...прогнати всі 4 EXPLAIN (ANALYZE, BUFFERS), потім:
-psql "$DATABASE_URL" -Atc "SELECT indexrelname FROM pg_stat_user_indexes WHERE schemaname='public' AND idx_scan = 0 AND indexrelid NOT IN (SELECT conindid FROM pg_constraint WHERE conindid <> 0);"   # порожньо
-
-# partial/expression присутній (не GIN)
-psql "$DATABASE_URL" -Atc "SELECT count(*) FROM pg_indexes WHERE schemaname='public' AND indexdef NOT ILIKE '%USING gin%' AND (indexdef ILIKE '% WHERE %' OR indexdef ~ '\((\w+)\(');"   # >= 1
-
-# пошуковий індекс — GIN по tsvector
-psql "$DATABASE_URL" -Atc "SELECT count(*) FROM pg_index i JOIN pg_class c ON c.oid=i.indexrelid JOIN pg_am am ON am.oid=c.relam JOIN pg_opclass o ON o.oid=i.indclass[0] WHERE am.amname='gin' AND o.opcintype='tsvector'::regtype;"   # >= 1
-```
-
-Фактичний результат на цій машині: FK = 4, `orders` = 110 000, `products` =
-120 000, мертвих індексів = 0, partial/expression = 2
-(`idx_orders_pending_created`, `idx_users_email_lower`), GIN-по-tsvector = 1.
-Повні EXPLAIN — у [`db/OPTIMIZATIONS.md`](db/OPTIMIZATIONS.md).
-
-### Версії, на яких перевірено
-
-`@redocly/cli 2.46.0`, `@nestjs/core 10.4.20`, `@nestjs/config 3.3.0`,
-`express 4.22.2`, `express-openapi-validator 5.6.2`, `zod 4.6.5`, `pg 8.23.0`,
-`typescript 7.0.2`, `typeorm 0.3.31` (Node 20.12.1).
-
-> `@nestjs/*` пришпилені на v10: у v11+ `@nestjs/platform-express` тягне за
-> собою Express 5, а `express-openapi-validator@5.6.2` найнадійніше працює
-> саме з Express 4.
-
-> `typeorm` пришпилений на `0.3.31` (dist-tag `legacy`), не на `latest`
-> (`1.x`): `typeorm@1.x` вимагає Node `^20.19.0 || ^22.13.0 || >=24.11.0`,
-> тут — Node `20.12.1`. `0.3.31` вимагає лише `>=16.13.0`.
