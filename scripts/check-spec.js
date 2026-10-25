@@ -12,14 +12,14 @@ const idem = ops
   .find((x) => x.in === 'header' && /idempotency-key/i.test(x.name));
 
 console.log(
-  'операцій:',
+  'operations:',
   ops.length,
-  '· ресурсів:',
+  '· resources:',
   new Set(Object.keys(s.paths).map((p) => p.split('/')[1])).size,
 );
 console.log(
   'Idempotency-Key: required =',
   idem?.required,
-  '· опис, символів =',
+  '· description, chars =',
   (idem?.description ?? '').trim().length,
 );
