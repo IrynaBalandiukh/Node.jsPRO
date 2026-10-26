@@ -1,10 +1,11 @@
 import { DataSource, QueryRunner } from 'typeorm';
 
-// Лише два коди PostgreSQL означають «повтори транзакцію цілком»:
-//  40001 serialization_failure — конфлікт під REPEATABLE READ/SERIALIZABLE;
-//  40P01 deadlock_detected     — PG сам убив одного з учасників дедлока.
-// Усе інше (23xxx порушення constraint, 42xxx синтаксис, бізнес-помилки)
-// від повтору не зникне — повтор лише сховає баг або помножить побічні ефекти.
+// Only two PostgreSQL codes mean "retry the whole transaction":
+//  40001 serialization_failure - conflict under REPEATABLE READ/SERIALIZABLE;
+//  40P01 deadlock_detected     - PG killed one participant of a deadlock.
+// Anything else (23xxx constraint violations, 42xxx SQL errors, business
+// errors) will not go away on retry; retrying only hides a bug or repeats
+// side effects.
 const RETRYABLE = new Set(['40001', '40P01']);
 
 export function pgErrorCode(err: unknown): string | undefined {
@@ -24,9 +25,9 @@ export interface RetryOptions {
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 /**
- * Виконує `fn` у транзакції; на 40001/40P01 відкочує, чекає (експоненційний
- * backoff + jitter) і запускає `fn` знову З ПОЧАТКУ — разом із читаннями,
- * бо повтор самого запису на застарілому читанні — той самий lost update.
+ * Runs `fn` in a transaction. On 40001/40P01 it rolls back, waits (exponential
+ * backoff + jitter) and runs `fn` again FROM THE START, reads included:
+ * retrying only the write on a stale read is the same lost update.
  */
 export async function withRetry<T>(
   ds: DataSource,
@@ -47,7 +48,7 @@ export async function withRetry<T>(
       try {
         await qr.rollbackTransaction();
       } catch {
-        // з'єднання могло вже закритись — оригінальна помилка важливіша
+        // The connection may already be closed; the original error matters more.
       }
       const code = pgErrorCode(err);
       if (!code || !RETRYABLE.has(code) || attempt >= maxAttempts) throw err;

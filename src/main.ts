@@ -18,6 +18,7 @@ async function bootstrap() {
 
   await app.listen(port);
   console.log(`Marketplace API listening on http://localhost:${port}`);
+  console.log(`Swagger UI: http://localhost:${port}/docs`);
 }
 
 bootstrap();

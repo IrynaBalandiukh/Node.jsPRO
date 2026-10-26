@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
-# Restore-drill: останній дамп -> ЧИСТИЙ контейнер з порожнім новим volume ->
-# порівняння контрольних значень -> MATCH (exit 0) або MISMATCH (exit 1).
+# Restore drill: latest dump -> CLEAN container with a new empty volume ->
+# compare checksums -> MATCH (exit 0) or failure (exit 1).
 #   bash scripts/with-secrets.sh dev bash scripts/restore-drill.sh
-# Контейнер і volume створюються на старті й знищуються на виході (також при
-# помилці), тож повторний запуск завжди починає з нуля.
+# The container and volume are created at start and removed on exit (also on
+# error), so every run starts from scratch.
 set -euo pipefail
 # shellcheck source=scripts/lib-db.sh
 source "$(dirname "${BASH_SOURCE[0]}")/lib-db.sh"
@@ -14,7 +14,7 @@ PG_IMAGE="${PG_IMAGE:-postgres:16-alpine}"
 
 now_ms() {
   local t; t="$(date +%s%3N)"
-  case "$t" in *N*) echo $(( $(date +%s) * 1000 )) ;; *) echo "$t" ;; esac   # BSD/macOS date без %N
+  case "$t" in *N*) echo $(( $(date +%s) * 1000 )) ;; *) echo "$t" ;; esac   # BSD/macOS date has no %N
 }
 cleanup() {
   docker rm -f -v "$DRILL_CONTAINER" > /dev/null 2>&1 || true
@@ -26,6 +26,11 @@ DUMP="$(ls -1 "$BACKUP_DIR/${DB_NAME}"_*.dump 2> /dev/null | sort | tail -n 1 ||
 [ -n "$DUMP" ] || { echo "Немає жодного дампу в $BACKUP_DIR — спершу scripts/backup.sh" >&2; exit 1; }
 [ -f "$DUMP.checksum" ] || { echo "Немає $DUMP.checksum" >&2; exit 1; }
 EXPECTED="$(cat "$DUMP.checksum")"
+# A dump of a database without schema proves nothing: fail instead of MATCH.
+if [ "$EXPECTED" = "no-schema" ]; then
+  echo "Бекап зроблено з бази без схеми — доводити нічого. Виконайте npm run migrate && npm run seed, потім scripts/backup.sh" >&2
+  exit 1
+fi
 SIZE="$(wc -c < "$DUMP")"
 
 echo "Дамп:     $DUMP ($SIZE байт)"
@@ -38,8 +43,8 @@ docker run -d --name "$DRILL_CONTAINER" \
   -e POSTGRES_USER="$DB_USER" -e POSTGRES_PASSWORD="$DB_PASS" -e POSTGRES_DB="$DB_NAME" \
   -v "$DRILL_VOLUME:/var/lib/postgresql/data" "$PG_IMAGE" > /dev/null
 
-# -h 127.0.0.1: під час initdb тимчасовий сервер слухає лише unix-сокет,
-# тож TCP-перевірка чекає на справжній сервер.
+# -h 127.0.0.1: during initdb a temporary server listens only on the unix
+# socket, so the TCP check waits for the real server.
 for _ in $(seq 1 60); do
   docker exec "$DRILL_CONTAINER" pg_isready -h 127.0.0.1 -U "$DB_USER" -d "$DB_NAME" > /dev/null 2>&1 && break
   sleep 1
@@ -59,7 +64,6 @@ echo "Відновлено: $ACTUAL"
 echo "Час відновлення (pg_restore): $(( T2 - T1 )) мс; RTO drill (старт контейнера -> перевірка): $(( $(now_ms) - T0 )) мс"
 
 if [ "$ACTUAL" = "$EXPECTED" ]; then
-  [ "$EXPECTED" != "no-schema" ] || echo "УВАГА: база порожня (немає схеми) — перед drill виконайте npm run migrate && npm run seed" >&2
   echo "MATCH"
 else
   echo "MISMATCH: очікувалось '$EXPECTED', відновлено '$ACTUAL'" >&2

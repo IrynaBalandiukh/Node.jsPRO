@@ -1,13 +1,15 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { json } from 'express';
+import * as swaggerUi from 'swagger-ui-express';
+import { parse as parseYaml } from 'yaml';
 import * as OpenApiValidator from 'express-openapi-validator';
 import { NestExpressApplication } from '@nestjs/platform-express';
 import { AllExceptionsFilter } from './common/all-exceptions.filter';
 import { openApiErrorHandler } from './common/openapi-error-handler';
 
-// Спека лежить у <root>/openapi: з src/ (ts-node), з dist/ (tsc) і з
-// dist-test/src/ (збірка тестів) до кореня різна кількість кроків угору.
+// The spec lives in <root>/openapi; the number of levels up differs between
+// src/ (ts-node), dist/ (tsc) and dist-test/src/ (test build).
 function resolveSpecPath(): string {
   for (const up of ['..', '../..']) {
     const candidate = path.join(__dirname, up, 'openapi', 'openapi.yaml');
@@ -17,21 +19,28 @@ function resolveSpecPath(): string {
 }
 
 /**
- * Єдина конфігурація застосунку (body parser, OpenAPI-валідація, фільтр
- * помилок). Її викликають і main.ts, і E2E/contract-тести — тому тести
- * перевіряють саме той застосунок, що їде в прод. Застосунок має бути
- * створений з `bodyParser: false`.
+ * The single app configuration (Swagger UI, body parser, OpenAPI validation,
+ * error filter). Both main.ts and the E2E/contract tests call it, so the tests
+ * exercise the same app that ships. The app must be created with
+ * `bodyParser: false`.
  */
 export function configureApp(app: NestExpressApplication): void {
+  const apiSpec = resolveSpecPath();
+
+  // Swagger UI is generated straight from openapi.yaml at startup, so the docs
+  // can never drift from the contract. Mounted before the validator.
+  const openApiDocument = parseYaml(fs.readFileSync(apiSpec, 'utf8'));
+  app.use('/docs', swaggerUi.serve, swaggerUi.setup(openApiDocument));
+
   app.use(json());
   app.use(
     OpenApiValidator.middleware({
-      apiSpec: resolveSpecPath(),
+      apiSpec,
       validateRequests: true,
       validateResponses: true,
-      // /health is operational infrastructure, not a Marketplace API
-      // resource — it isn't part of the OpenAPI contract.
-      ignorePaths: /^\/health/,
+      // /health and /docs (Swagger UI) are operational infrastructure, not
+      // Marketplace API resources - they aren't part of the OpenAPI contract.
+      ignorePaths: /^\/(health|docs)/,
     }),
   );
   app.use(openApiErrorHandler);

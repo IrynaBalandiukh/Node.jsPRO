@@ -5,15 +5,14 @@ export type JobHandler = (job: { id: string; kind: string; payload: Record<strin
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 /**
- * Один воркер. Цикл: у транзакції беремо ОДНУ вільну задачу
- * `FOR UPDATE SKIP LOCKED` (рядки, які тримають інші воркери, пропускаються,
- * а не блокують), обробляємо, і в тій самій транзакції ставимо status='done',
- * processed = processed + 1. Якщо воркер упав до COMMIT — лок зникає разом
- * із транзакцією, і задачу підбере інший.
+ * One worker loop. In a transaction it takes ONE free job with
+ * `FOR UPDATE SKIP LOCKED` (rows locked by other workers are skipped, not
+ * waited for), handles it, and in the same transaction sets status = 'done'
+ * and processed = processed + 1. If the worker dies before COMMIT, the lock
+ * disappears with the transaction and another worker picks the job up.
  *
- * Порожній результат SKIP LOCKED означає лише «вільних зараз нема». Тому
- * перед виходом перепитуємо, чи лишились pending-рядки (вони можуть бути
- * залочені іншими воркерами і повернутись у чергу, якщо той впаде).
+ * An empty SKIP LOCKED result only means "nothing free right now", so before
+ * exiting the worker re-counts pending rows (other workers may still hold them).
  */
 export async function runWorker(
   ds: DataSource,
@@ -49,7 +48,7 @@ export async function runWorker(
           true,
         );
         if (left.records[0].n === 0) return handled;
-        await sleep(20); // pending є, але їх тримають інші воркери — чекаємо
+        await sleep(20); // pending rows exist but are held by other workers: wait
         continue;
       }
 
@@ -72,7 +71,7 @@ export async function runWorker(
   }
 }
 
-// Імітація post-processing (лист/чек): задача триває `ms` мілісекунд.
+// Simulated post-processing (email/receipt): a job takes `ms` milliseconds.
 export const simulatedHandler =
   (ms: number): JobHandler =>
   async () => {

@@ -2,20 +2,20 @@ services:
   postgres:
     image: postgres:16-alpine
     environment:
-      POSTGRES_USER: marketplace_app
-      POSTGRES_PASSWORD: changeme_local_dev_password
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: changeme_local_superuser_password
       POSTGRES_DB: marketplace
     ports:
       - "5432:5432"
     volumes:
       - marketplace_pgdata:/var/lib/postgresql/data
+      - ./db/init.sql:/docker-entrypoint-initdb.d/01-init.sql:ro
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U marketplace_app -d marketplace"]
+      test: ["CMD-SHELL", "pg_isready -U postgres -d marketplace"]
       interval: 5s
       timeout: 3s
       retries: 5
 
-  # Пулер зʼєднань (ДЗ №15): застосунок → pgbouncer:6432 → postgres:5432.
   pgbouncer:
     image: edoburu/pgbouncer:latest
     depends_on:
@@ -70,6 +70,4 @@ services:
 
 volumes:
   marketplace_pgdata:
-    name: marketplace_pgdata
   pact_broker_pgdata:
-    name: pact_broker_pgdata

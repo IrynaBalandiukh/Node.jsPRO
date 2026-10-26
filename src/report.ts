@@ -2,16 +2,14 @@ import 'reflect-metadata';
 import AppDataSource from './data-source';
 import { OrderItem } from './entities/order-item.entity';
 
-// Звіт через QueryBuilder (ДЗ №13, п.6): "топ продавців за виторгом (оплачені
-// замовлення)" — агрегат (SUM/COUNT) + GROUP BY + 3 JOIN
-// (order_items → order, order_items → product, product → seller). Це не
-// виразити через find()/findOne(): їм невідомі агрегатні функції та
-// GROUP BY, вони повертають entity-графи, а не обчислені рядки.
+// Report: top sellers by revenue (paid orders only) — aggregates (SUM/COUNT),
+// GROUP BY and 3 JOINs. find()/findOne() cannot express this: they return
+// entity graphs, not computed rows.
 
-interface RevenueByCellerRow {
+interface RevenueBySellerRow {
   seller_id: string;
   seller_email: string;
-  revenue_cents: string; // bigint з Postgres приходить рядком
+  revenue_cents: string; // bigint arrives from Postgres as a string
   orders_count: string;
 }
 
@@ -32,16 +30,15 @@ async function main(): Promise<void> {
       .addGroupBy('seller.email')
       .orderBy('revenue_cents', 'DESC')
       .limit(10)
-      .getRawMany<RevenueByCellerRow>();
+      .getRawMany<RevenueBySellerRow>();
 
-    console.log('Топ продавців за виторгом (тільки status = paid):\n');
-    console.log('seller_id  seller_email                       виторг      к-ть замовлень');
+    console.log('Top sellers by revenue (status = paid only):\n');
+    console.log('seller_id  seller_email                          revenue    orders_count');
     console.log('---------  ---------------------------------  ----------  --------------');
 
     for (const row of rows) {
-      // bigint з SUM/COUNT приходить рядком — Number() тут безпечний лише
-      // для друку (курсовий обсяг даних невеликий); на реальних мільйонах
-      // рядків це поле лишають строкою/BigInt.
+      // SUM/COUNT arrive as strings; Number() is fine for printing at this
+      // data size.
       const revenue = (Number(row.revenue_cents) / 100).toFixed(2);
       console.log(
         `${row.seller_id.padEnd(9)}  ${row.seller_email.padEnd(33)}  ${revenue.padStart(10)}  ${row.orders_count.padStart(14)}`,
@@ -49,7 +46,7 @@ async function main(): Promise<void> {
     }
 
     if (rows.length === 0) {
-      console.log('(даних немає — спочатку запусти npm run seed)');
+      console.log('(no data — run npm run seed first)');
     }
   } finally {
     await AppDataSource.destroy();
@@ -57,6 +54,6 @@ async function main(): Promise<void> {
 }
 
 main().catch((err) => {
-  console.error('report впав:', err);
+  console.error('report failed:', err);
   process.exit(1);
 });

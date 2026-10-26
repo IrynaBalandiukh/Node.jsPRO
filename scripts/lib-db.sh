@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
-# Спільне для backup.sh / restore-drill.sh (ДЗ №15). Підключення беремо лише з
-# $DATABASE_URL — його наповнює scripts/with-secrets.sh (ДЗ №11) або
-# SKIP_VAULT=1 + export від грейдера. Жодного нового env-файла.
+# Shared by backup.sh / restore-drill.sh (HW 15). The connection comes only from
+# $DATABASE_URL, filled by scripts/with-secrets.sh (HW 11) or by SKIP_VAULT=1 plus
+# an export from the grader. No new env file.
 # shellcheck shell=bash
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -18,17 +18,17 @@ DB_USER="${BASH_REMATCH[2]}"
 DB_PASS="${BASH_REMATCH[3]}"
 DB_NAME="${BASH_REMATCH[7]}"
 
-# Бекап бере pg_dump ПОВЗ PgBouncer — прямо з контейнера Postgres (host у
-# DATABASE_URL — це пулер і порт із хоста, а pg_dump довга REPEATABLE READ
-# транзакція з SET-ами, яку transaction mode не любить). Тому на хості не
-# потрібні ні pg_dump, ні psql.
+# pg_dump runs BYPASSING PgBouncer, inside the Postgres container: the host in
+# DATABASE_URL is the pooler, and pg_dump is one long REPEATABLE READ transaction
+# with SETs, which transaction mode handles badly. So the host needs neither
+# pg_dump nor psql.
 PG_SERVICE="${PG_SERVICE:-postgres}"
 BACKUP_DIR="${BACKUP_DIR:-$ROOT/backups}"
 
 pg_in_service() { docker compose exec -T -e PGPASSWORD="$DB_PASS" "$PG_SERVICE" "$@"; }
 
-# Контрольні значення: кількість рядків по таблицях + агрегат по ключовій
-# таблиці orders. Перший аргумент — команда, що виконує psql у потрібній БД.
+# Checksum: row counts per table + an aggregate over the key table orders.
+# The arguments are the command prefix that runs psql in the target database.
 checksum() {
   local has
   has="$("$@" psql -U "$DB_USER" -d "$DB_NAME" -At -c "SELECT to_regclass('public.orders') IS NOT NULL")"
@@ -38,5 +38,5 @@ checksum() {
            (SELECT count(*) FROM products)     || '|' ||
            (SELECT count(*) FROM orders)       || '|' ||
            (SELECT count(*) FROM order_items)  || '|' ||
-           (SELECT coalesce(sum(total_amount_cents), 0) FROM orders)"
+           (SELECT coalesce(sum(total_cents), 0) FROM orders)"
 }

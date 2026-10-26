@@ -7,48 +7,43 @@ export interface CheckoutItem {
 
 export interface CheckoutResult {
   orderId: string;
-  totalAmountCents: number;
+  totalCents: number;
 }
 
-// Бізнес-помилки: транзакція відкочується цілком, замовлення-«сироти» не
-// лишається.
+// Business errors: the whole transaction is rolled back, no orphan orders.
 export class OutOfStockError extends Error {
   constructor(public readonly productId: string) {
-    super(`Недостатньо товару ${productId} на складі`);
+    super(`Not enough stock for product ${productId}`);
   }
 }
 
 export class InsufficientFundsError extends Error {
   constructor(public readonly buyerId: string) {
-    super(`Недостатньо коштів у покупця ${buyerId}`);
+    super(`Insufficient balance for buyer ${buyerId}`);
   }
 }
 
-// Один запит із structured result: TypeORM для UPDATE ... RETURNING інакше
-// повертає [rows, count], для SELECT — просто rows; records уніфікує.
+// Structured result, so UPDATE ... RETURNING and SELECT both yield plain rows.
 async function run(qr: QueryRunner, sql: string, params: unknown[]): Promise<Record<string, any>[]> {
   const res = await qr.query(sql, params, true);
   return res.records ?? [];
 }
 
-/**
- * Оформлення замовлення в ОДНІЙ транзакції на ОДНОМУ з'єднанні (queryRunner):
- *  1. для кожної позиції — атомарний `UPDATE products SET stock = stock - $n
- *     WHERE id = $1 AND stock >= $n RETURNING price_cents`; 0 рядків = нема
- *     товару (і перевірка, і рядковий лок — вікна для гонки немає);
- *  2. списання балансу — так само атомарним UPDATE ... WHERE balance >= total;
- *  3. INSERT orders + order_items;
- *  4. INSERT задачі post-processing у чергу (виконується воркером окремо).
- * Позиції сортуються за productId — однаковий порядок локів у всіх
- * транзакцій виключає deadlock між замовленнями з кількома товарами.
- */
+// One transaction on one connection (queryRunner). Stock and balance are
+// decremented by atomic `UPDATE ... WHERE stock >= $n RETURNING`: 0 rows means
+// "not enough", and the row lock closes the race window. Items are locked in
+// productId order, so concurrent multi-item orders cannot deadlock.
 export async function checkout(
   ds: DataSource,
   buyerId: string,
   items: CheckoutItem[],
 ): Promise<CheckoutResult> {
-  if (items.length === 0) throw new Error('Порожнє замовлення');
-  const sorted = [...items].sort((a, b) => (BigInt(a.productId) < BigInt(b.productId) ? -1 : 1));
+  if (items.length === 0) throw new Error('Empty order');
+  const sorted = [...items].sort((a, b) => {
+    const x = BigInt(a.productId);
+    const y = BigInt(b.productId);
+    return x < y ? -1 : x > y ? 1 : 0;
+  });
 
   const qr = ds.createQueryRunner();
   await qr.connect();
@@ -82,7 +77,7 @@ export async function checkout(
 
     const [order] = await run(
       qr,
-      `INSERT INTO orders (buyer_id, status, total_amount_cents)
+      `INSERT INTO orders (buyer_id, status, total_cents)
        VALUES ($1, 'paid', $2) RETURNING id`,
       [buyerId, total],
     );
@@ -104,9 +99,10 @@ export async function checkout(
     );
 
     await qr.commitTransaction();
-    return { orderId, totalAmountCents: total };
+    return { orderId, totalCents: total };
   } catch (err) {
-    await qr.rollbackTransaction();
+    // Roll back, but never let a rollback failure hide the original error.
+    await qr.rollbackTransaction().catch(() => undefined);
     throw err;
   } finally {
     await qr.release();
