@@ -544,7 +544,7 @@ Transaction mode віддає серверне з'єднання клієнту 
 
 ```
 docker compose up -d --wait
-export DB_HOST=127.0.0.1 DB_PORT=5432 DB_USER=marketplace_app DB_PASSWORD=changeme_local_dev_password DB_NAME=marketplace
+export DB_HOST=127.0.0.1 DB_PORT=6432 DB_USER=marketplace_app DB_PASSWORD=changeme_local_dev_password DB_NAME=marketplace
 export SKIP_VAULT=1    # у грейдера немає доступу до сховища
 
 npm ci
@@ -559,7 +559,7 @@ npm run demo:nplus1
 npm run report
 
 # ДЗ №14 (конкурентність) — та сама база, ті самі змінні, ті самі SKIP_VAULT/DB_*.
-# Замість DB_* можна задати єдиний рядок: export DATABASE_URL=postgres://marketplace_app:changeme_local_dev_password@127.0.0.1:5432/marketplace
+# Замість DB_* можна задати єдиний рядок: export DATABASE_URL=postgres://marketplace_app:changeme_local_dev_password@127.0.0.1:6432/marketplace
 npm run demo:race           # спроб 50, успішних 10, stock 0, відʼємних 0; exit 0
 npm run demo:workers        # "оброблено двічі: 0", розподіл по 4 воркерах, час < послідовного
 npm run demo:retry          # пійманий 40001 + повтор, баланс сходиться; exit 0
@@ -569,7 +569,7 @@ npm run demo:retry          # пійманий 40001 + повтор, балан�
 # Докер потрібен лише для `docker compose` — pg_dump/psql на хості не потрібні.
 export DATABASE_URL=postgres://marketplace_app:changeme_local_dev_password@127.0.0.1:6432/marketplace
 export SKIP_VAULT=1
-npm run migrate && npm run seed                 # щоб було що бекапити (на порожній БД теж працює)
+npm run migrate && npm run seed                 # щоб було що бекапити (drill на порожній БД без схеми впаде з exit 1)
 bash scripts/with-secrets.sh dev bash scripts/backup.sh          # друкує backups/marketplace_<дата>.dump
 bash scripts/with-secrets.sh dev bash scripts/restore-drill.sh   # друкує MATCH, exit 0
 ```

@@ -16,7 +16,6 @@ services:
       timeout: 3s
       retries: 5
 
-  # Пулер зʼєднань (ДЗ №15): застосунок → pgbouncer:6432 → postgres:5432.
   pgbouncer:
     image: edoburu/pgbouncer:latest
     depends_on:
@@ -60,4 +59,3 @@ services:
 
 volumes:
   marketplace_pgdata:
-    name: marketplace_pgdata
