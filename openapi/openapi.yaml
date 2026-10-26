@@ -241,8 +241,10 @@ components:
         type:
           type: string
           format: uri-reference
-          description: A URI identifying the problem type.
-          example: about:blank
+          description: >
+            A URI identifying the problem type. Clients can switch on it to
+            tell apart errors that share a status code or need different handling.
+          example: https://marketplace.example/problems/validation-error
         title:
           type: string
           description: Short, human-readable summary of the problem type.
@@ -279,7 +281,23 @@ components:
           example: 8999
         stock:
           type: integer
+          description: Remaining quantity in stock.
           example: 12
+        seller_id:
+          type: string
+          description: >
+            Identifier of the seller (User) who owns the product. Not required
+            yet: populated once authentication is added.
+          example: user_1
+        photos:
+          type: array
+          description: >
+            URLs of product photos. Not required yet: populated once file
+            uploads are added.
+          items:
+            type: string
+            format: uri
+          example: ["https://cdn.example.com/photos/prod_1_1.jpg"]
 
     ProductPage:
       type: object
@@ -317,6 +335,12 @@ components:
         id:
           type: string
           example: order_1
+        buyer_id:
+          type: string
+          description: >
+            Identifier of the buyer (User) who placed the order. Not required
+            yet: populated once authentication is added.
+          example: user_2
         status:
           type: string
           enum: [pending, paid, cancelled]
@@ -349,6 +373,7 @@ components:
 
     CreateOrderRequest:
       type: object
+      additionalProperties: false
       required: [items]
       properties:
         items:
@@ -356,6 +381,7 @@ components:
           minItems: 1
           items:
             type: object
+            additionalProperties: false
             required: [product_id, quantity]
             properties:
               product_id:

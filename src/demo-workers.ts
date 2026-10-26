@@ -3,8 +3,8 @@ import { DataSource } from 'typeorm';
 import { buildDataSourceOptions } from './data-source';
 import { runWorker, simulatedHandler } from './worker';
 
-// demo:workers — пул воркерів (Promise-и в одному процесі, кожен зі своїм
-// з'єднанням/транзакцією) розбирає чергу jobs через FOR UPDATE SKIP LOCKED.
+// demo:workers - a pool of workers (Promises in one process, each with its own
+// connection and transaction) drains the jobs queue via FOR UPDATE SKIP LOCKED.
 
 const JOBS = 40;
 const WORKERS = 4;

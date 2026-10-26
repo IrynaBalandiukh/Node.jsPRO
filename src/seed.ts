@@ -5,16 +5,13 @@ import { Product } from './entities/product.entity';
 import { Order, OrderStatus } from './entities/order.entity';
 import { OrderItem } from './entities/order-item.entity';
 
-// Детермінований, ідемпотентний seed (ДЗ №13, п.4): фіксовані дані, без
-// random()/Date.now(). Другий запуск не дублює рядки і не падає:
-//  - users дедуплікуються через upsert по email (UNIQUE-констрейнт у схемі);
-//  - products/orders не мають природного unique-ключа в схемі — тому
-//    дедуплікуються на рівні застосунку: "чи вже є рядок з таким
-//    детермінованим маркером" (ім'я товару / created_at замовлення), і
-//    insert пропускається, якщо так;
-//  - order_items ідуть услід за своїм order: якщо order уже існував,
-//    його items наново не створюються (вони були створені разом із ним
-//    при першому запуску).
+// Deterministic, idempotent seed: fixed data, no random()/Date.now(), so a
+// second run neither duplicates rows nor fails.
+//  - users: INSERT ... ON CONFLICT DO NOTHING (unique index on lower(email));
+//  - products/orders have no natural unique key, so a row is skipped if one
+//    with the same deterministic marker (product name / order created_at)
+//    already exists;
+//  - order_items are created together with their order only.
 
 interface SeedUser {
   email: string;
@@ -23,12 +20,11 @@ interface SeedUser {
   balanceCents: number;
 }
 
-// Баланси покупців свідомо надлишкові (10 млн грн), щоб у demo:race
-// обмежувачем був саме stock, а не гаманець.
+// Buyer balances are deliberately huge (10M UAH) so that in demo:race
+// the limiting factor is stock, not the wallet.
 const BUYER_BALANCE_CENTS = 1_000_000_000;
 
 const SEED_USERS: SeedUser[] = [
-  { email: 'admin@seed.marketplace.dev', passwordHash: 'seed$admin$hash', role: 'admin', balanceCents: 0 },
   { email: 'seller1@seed.marketplace.dev', passwordHash: 'seed$seller1$hash', role: 'seller', balanceCents: 0 },
   { email: 'seller2@seed.marketplace.dev', passwordHash: 'seed$seller2$hash', role: 'seller', balanceCents: 0 },
   { email: 'seller3@seed.marketplace.dev', passwordHash: 'seed$seller3$hash', role: 'seller', balanceCents: 0 },
@@ -63,7 +59,7 @@ const SEED_PRODUCTS: SeedProduct[] = [
 interface SeedOrder {
   buyerEmail: string;
   status: OrderStatus;
-  // Унікальний і детермінований на весь seed-набір — слугує ключем ідемпотентності.
+  // Unique and deterministic across the seed set; serves as the idempotency key.
   createdAt: string;
   items: Array<{ productName: string; quantity: number; unitPriceCents: number }>;
 }
@@ -135,14 +131,26 @@ const SEED_ORDERS: SeedOrder[] = [
 async function seedUsers(): Promise<Map<string, User>> {
   const repo = AppDataSource.getRepository(User);
 
-  await repo.upsert(
-    SEED_USERS.map((u) => ({ email: u.email, passwordHash: u.passwordHash, role: u.role, balanceCents: u.balanceCents })),
-    ['email'],
-  );
+  // ON CONFLICT DO NOTHING works with any unique index, including the
+  // expression index on lower(email) that upsert(..., ['email']) cannot target.
+  await repo
+    .createQueryBuilder()
+    .insert()
+    .into(User)
+    .values(
+      SEED_USERS.map((u) => ({
+        email: u.email,
+        passwordHash: u.passwordHash,
+        role: u.role,
+        balanceCents: u.balanceCents,
+      })),
+    )
+    .orIgnore()
+    .execute();
 
   const users = await repo.find({ where: SEED_USERS.map((u) => ({ email: u.email })) });
   const byEmail = new Map(users.map((u) => [u.email, u]));
-  console.log(`users: ${users.length} у базі (seed-набір: ${SEED_USERS.length})`);
+  console.log(`users: ${users.length} in DB (seed set: ${SEED_USERS.length})`);
   return byEmail;
 }
 
@@ -155,7 +163,7 @@ async function seedProducts(usersByEmail: Map<string, User>): Promise<Map<string
     if (existing) continue;
 
     const seller = usersByEmail.get(p.sellerEmail);
-    if (!seller) throw new Error(`seed: продавець ${p.sellerEmail} не знайдений`);
+    if (!seller) throw new Error(`seed: seller ${p.sellerEmail} not found`);
 
     await repo.insert({
       name: p.name,
@@ -170,7 +178,7 @@ async function seedProducts(usersByEmail: Map<string, User>): Promise<Map<string
 
   const products = await repo.find({ where: SEED_PRODUCTS.map((p) => ({ name: p.name })) });
   const byName = new Map(products.map((p) => [p.name, p]));
-  console.log(`products: ${products.length} у базі (${created} нових цим запуском)`);
+  console.log(`products: ${products.length} in DB (${created} new this run)`);
   return byName;
 }
 
@@ -186,14 +194,14 @@ async function seedOrders(usersByEmail: Map<string, User>, productsByName: Map<s
     if (existing) continue;
 
     const buyer = usersByEmail.get(o.buyerEmail);
-    if (!buyer) throw new Error(`seed: покупець ${o.buyerEmail} не знайдений`);
+    if (!buyer) throw new Error(`seed: buyer ${o.buyerEmail} not found`);
 
-    const totalAmountCents = o.items.reduce((sum, it) => sum + it.unitPriceCents * it.quantity, 0);
+    const totalCents = String(o.items.reduce((sum, it) => sum + it.unitPriceCents * it.quantity, 0));
 
     const insertResult = await orderRepo.insert({
       buyer: { id: buyer.id },
       status: o.status,
-      totalAmountCents,
+      totalCents,
       createdAt,
     });
     const orderId = insertResult.identifiers[0].id as string;
@@ -201,7 +209,7 @@ async function seedOrders(usersByEmail: Map<string, User>, productsByName: Map<s
 
     for (const it of o.items) {
       const product = productsByName.get(it.productName);
-      if (!product) throw new Error(`seed: товар ${it.productName} не знайдений`);
+      if (!product) throw new Error(`seed: product ${it.productName} not found`);
 
       await itemRepo.insert({
         order: { id: orderId },
@@ -214,8 +222,8 @@ async function seedOrders(usersByEmail: Map<string, User>, productsByName: Map<s
   }
 
   const [orderCount, itemCount] = await Promise.all([orderRepo.count(), itemRepo.count()]);
-  console.log(`orders: ${orderCount} у базі (${createdOrders} нових цим запуском)`);
-  console.log(`order_items: ${itemCount} у базі (${createdItems} нових цим запуском)`);
+  console.log(`orders: ${orderCount} in DB (${createdOrders} new this run)`);
+  console.log(`order_items: ${itemCount} in DB (${createdItems} new this run)`);
 }
 
 async function main(): Promise<void> {
@@ -224,13 +232,13 @@ async function main(): Promise<void> {
     const usersByEmail = await seedUsers();
     const productsByName = await seedProducts(usersByEmail);
     await seedOrders(usersByEmail, productsByName);
-    console.log('Seed завершено.');
+    console.log('Seed finished.');
   } finally {
     await AppDataSource.destroy();
   }
 }
 
 main().catch((err) => {
-  console.error('Seed впав:', err);
+  console.error('Seed failed:', err);
   process.exit(1);
 });
