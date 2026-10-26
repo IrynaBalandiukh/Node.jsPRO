@@ -3,15 +3,14 @@ import { DataSource } from 'typeorm';
 import { buildDataSourceOptions } from './data-source';
 import { checkout, InsufficientFundsError, OutOfStockError } from './checkout';
 
-// demo:race — 50 паралельних checkout на один товар зі stock = 10, по одній
-// одиниці. Promise.all, жодних черг у застосунку: кожен виклик бере власне
-// з'єднання з пулу. Скрипт сам перевіряє інваріанти й виходить із кодом 1,
-// якщо стався oversell.
+// demo:race - 50 parallel checkouts of one product with stock = 10, one unit
+// each. Promise.all, no queue in the app: every call takes its own pooled
+// connection. Exits with code 1 if any invariant is broken (e.g. oversell).
 
 const ATTEMPTS = 50;
 const INITIAL_STOCK = 10;
 const BUYERS = 5;
-const RICH_BALANCE_CENTS = 1_000_000_000; // свідомо надлишковий: обмежує лише stock
+const RICH_BALANCE_CENTS = 1_000_000_000; // deliberately huge: only stock may limit
 const PRICE_CENTS = 12_345;
 
 async function scalar<T>(ds: DataSource, sql: string, params: unknown[] = []): Promise<T> {
@@ -19,11 +18,12 @@ async function scalar<T>(ds: DataSource, sql: string, params: unknown[] = []): P
   return rows[0].v as T;
 }
 
+// The unique index is on lower(email), so the conflict target must match it.
 async function upsertUser(ds: DataSource, email: string, role: string, balance: number): Promise<string> {
   const rows = await ds.query(
     `INSERT INTO users (email, password_hash, role, balance_cents)
      VALUES ($1, 'demo$hash', $2, $3)
-     ON CONFLICT (email) DO UPDATE SET balance_cents = EXCLUDED.balance_cents
+     ON CONFLICT (lower(email)) DO UPDATE SET balance_cents = EXCLUDED.balance_cents
      RETURNING id`,
     [email, role, balance],
   );
@@ -31,11 +31,11 @@ async function upsertUser(ds: DataSource, email: string, role: string, balance: 
 }
 
 async function main(): Promise<void> {
-  // 60 > 50: усі виклики справді отримують з'єднання одночасно.
+  // Pool max 60 > 50 attempts: all calls get a connection at the same time.
   const ds = new DataSource(buildDataSourceOptions({ extra: { max: ATTEMPTS + 10 } }));
   await ds.initialize();
   try {
-    // --- фікстури (ідемпотентні: повторний запуск скидає стан демо) ---
+    // Fixtures are idempotent: a re-run resets the demo state.
     const sellerId = await upsertUser(ds, 'race-seller@demo.marketplace.dev', 'seller', 0);
     const buyerIds: string[] = [];
     for (let i = 1; i <= BUYERS; i++) {
@@ -45,7 +45,7 @@ async function main(): Promise<void> {
       `DELETE FROM jobs WHERE kind = 'post_process' AND (payload->>'buyerId')::bigint = ANY($1::bigint[])`,
       [buyerIds],
     );
-    await ds.query(`DELETE FROM orders WHERE buyer_id = ANY($1::bigint[])`, [buyerIds]); // order_items — CASCADE
+    await ds.query(`DELETE FROM orders WHERE buyer_id = ANY($1::bigint[])`, [buyerIds]); // order_items cascade
     const existing = await ds.query(`SELECT id FROM products WHERE name = 'Race Demo Item'`);
     let productId: string;
     if (existing.length > 0) {
@@ -58,13 +58,13 @@ async function main(): Promise<void> {
     } else {
       const r = await ds.query(
         `INSERT INTO products (seller_id, name, description, price_cents, stock)
-         VALUES ($1, 'Race Demo Item', 'Товар для demo:race', $2, $3) RETURNING id`,
+         VALUES ($1, 'Race Demo Item', 'Item for demo:race', $2, $3) RETURNING id`,
         [sellerId, PRICE_CENTS, INITIAL_STOCK],
       );
       productId = String(r[0].id);
     }
 
-    // --- шквал ---
+    // The race itself.
     const started = Date.now();
     const results = await Promise.allSettled(
       Array.from({ length: ATTEMPTS }, (_, i) =>
@@ -81,7 +81,7 @@ async function main(): Promise<void> {
       (r) => !(r.reason instanceof OutOfStockError) && !(r.reason instanceof InsufficientFundsError),
     );
 
-    // --- перевірка інваріантів у БД ---
+    // Invariants are checked in the database, not in the app's counters.
     const finalStock = await scalar<number>(ds, `SELECT stock AS v FROM products WHERE id = $1`, [productId]);
     const negativeRows = await scalar<number>(ds, `SELECT count(*)::int AS v FROM products WHERE stock < 0`);
     const orders = await scalar<number>(

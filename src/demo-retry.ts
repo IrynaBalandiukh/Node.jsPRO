@@ -3,11 +3,11 @@ import { DataSource } from 'typeorm';
 import { buildDataSourceOptions } from './data-source';
 import { withRetry } from './retry';
 
-// demo:retry — навмисний read-modify-write у JS під REPEATABLE READ.
-// N конкурентних транзакцій читають баланс, «думають» і записують
-// баланс + DELTA. Без retry другий і наступні падають з 40001
-// ("could not serialize access due to concurrent update"), а з обгорткою
-// кожна переповторюється цілком (з новим читанням) і lost update немає.
+// demo:retry - a deliberate read-modify-write in JS under REPEATABLE READ.
+// N concurrent transactions read the balance, "think", then write
+// balance + DELTA. Without retry the second and later ones fail with 40001
+// ("could not serialize access due to concurrent update"); with the wrapper
+// each one is repeated whole (with a fresh read), so no update is lost.
 
 const TX_COUNT = 8;
 const DELTA = 100;
@@ -22,7 +22,7 @@ async function main(): Promise<void> {
     const rows = await ds.query(
       `INSERT INTO users (email, password_hash, role, balance_cents)
        VALUES ($1, 'demo$hash', 'buyer', 0)
-       ON CONFLICT (email) DO UPDATE SET balance_cents = 0
+       ON CONFLICT (lower(email)) DO UPDATE SET balance_cents = 0
        RETURNING id`,
       [EMAIL],
     );
@@ -36,9 +36,9 @@ async function main(): Promise<void> {
         withRetry(
           ds,
           async (qr) => {
-            // читання — частина транзакції і повторюється разом із нею
+            // The read is part of the transaction and is repeated with it.
             const [{ balance_cents }] = await qr.query(`SELECT balance_cents FROM users WHERE id = $1`, [userId]);
-            await sleep(30); // вікно, у якому інші транзакції встигають прочитати те саме
+            await sleep(30); // window in which other transactions read the same value
             await qr.query(`UPDATE users SET balance_cents = $2 WHERE id = $1`, [userId, balance_cents + DELTA]);
           },
           {

@@ -1,13 +1,13 @@
 import { MigrationInterface, QueryRunner } from "typeorm";
 
-// ДЗ №14: баланс покупця (списується в checkout) і черга задач (jobs) для
-// воркер-пулу на FOR UPDATE SKIP LOCKED. Схему міняє лише міграція.
+// Buyer balance (debited in checkout) and the jobs queue for the worker pool
+// (FOR UPDATE SKIP LOCKED). The schema is changed by migrations only.
 export class ConcurrencyLayer1790200000000 implements MigrationInterface {
     name = 'ConcurrencyLayer1790200000000'
 
     public async up(queryRunner: QueryRunner): Promise<void> {
-        // Гроші — integer у копійках; CHECK гарантує, що баланс не піде в мінус
-        // навіть якщо десь забудуть перевірку в коді.
+        // Money is an integer in cents; the CHECK keeps the balance non-negative
+        // even if a check is forgotten in code.
         await queryRunner.query(`ALTER TABLE "users" ADD "balance_cents" integer NOT NULL DEFAULT 0`);
         await queryRunner.query(`ALTER TABLE "users" ADD CONSTRAINT "CHK_users_balance_non_negative" CHECK ("balance_cents" >= 0)`);
 
@@ -23,8 +23,8 @@ export class ConcurrencyLayer1790200000000 implements MigrationInterface {
             CONSTRAINT "CHK_jobs_status" CHECK ("status" IN ('pending', 'done')),
             CONSTRAINT "CHK_jobs_processed" CHECK ("processed" >= 0),
             CONSTRAINT "PK_jobs_id" PRIMARY KEY ("id"))`);
-        // Часткові індекси: воркери шукають лише pending, тож індекс не росте
-        // разом з історією виконаних задач.
+        // Partial index: workers look only for pending jobs, so the index does
+        // not grow with the history of finished ones.
         await queryRunner.query(`CREATE INDEX "idx_jobs_pending" ON "jobs" ("id") WHERE "status" = 'pending'`);
     }
 
