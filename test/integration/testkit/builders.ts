@@ -2,8 +2,8 @@ import * as crypto from 'node:crypto';
 import { NewProduct } from '../../../src/repositories/products.repository';
 import { NewUser } from '../../../src/repositories/users.repository';
 
-// Унікальний суфікс: лічильник + випадкові байти, тож дефолти не стикаються
-// ні між викликами, ні між прогонами (UNIQUE(email) не спрацьовує випадково).
+// Unique suffix: counter + random bytes, so defaults collide
+// neither between calls nor between runs (UNIQUE(email) doesn't fire by accident).
 let seq = 0;
 const uniq = () => `${++seq}-${crypto.randomBytes(3).toString('hex')}`;
 

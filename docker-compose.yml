@@ -32,8 +32,8 @@ services:
       timeout: 3s
       retries: 5
 
-  # Pact Broker (ДЗ №16): сховище контрактів і гейт can-i-deploy.
-  # Локальний брокер: http://127.0.0.1:9292 (це не секрет, а адреса цього compose).
+  # Pact Broker (HW 16): contract storage and the can-i-deploy gate.
+  # Local broker: http://127.0.0.1:9292 (not a secret, just this compose file's address).
   pact-broker-db:
     image: postgres:16-alpine
     environment:
@@ -60,8 +60,8 @@ services:
       PACT_BROKER_LOG_LEVEL: INFO
       PACT_BROKER_PORT: "9292"
     healthcheck:
-      # 127.0.0.1, а не localhost: localhost у контейнері може резолвитись у
-      # ::1, а puma слухає лише IPv4.
+      # 127.0.0.1 rather than localhost: inside the container localhost may resolve to
+      # ::1, while puma listens on IPv4 only.
       test: ["CMD-SHELL", "wget -q --spider http://127.0.0.1:9292/diagnostic/status/heartbeat || exit 1"]
       interval: 5s
       timeout: 3s

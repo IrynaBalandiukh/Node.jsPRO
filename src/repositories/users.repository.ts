@@ -42,9 +42,9 @@ export class UsersRepository {
   }
 
   /**
-   * Ідемпотентний INSERT ... ON CONFLICT: повторний виклик з тим самим email
-   * не падає на UNIQUE і не створює дубль, а повертає наявний рядок.
-   * (DO UPDATE замість DO NOTHING — щоб RETURNING повертав рядок в обох гілках.)
+   * Idempotent INSERT ... ON CONFLICT: a repeated call with the same email
+   * doesn't fail on UNIQUE and doesn't create a duplicate, but returns the existing row.
+   * (DO UPDATE instead of DO NOTHING — so RETURNING returns a row in both branches.)
    */
   async ensure(user: NewUser): Promise<UserRecord> {
     const { rows } = await this.db.query(

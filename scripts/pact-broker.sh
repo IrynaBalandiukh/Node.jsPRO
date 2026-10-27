@@ -1,14 +1,14 @@
 #!/usr/bin/env bash
-# Тонка обгортка над HTTP API Pact Broker (curl, без додаткових залежностей).
-# Адреса і токен — лише з оточення (PACT_BROKER_URL / PACT_BROKER_TOKEN):
-# локально їх підставляє scripts/with-secrets.sh, у CI — secrets GitHub.
-# Дефолт URL — адреса локального compose, не секрет.
+# Thin wrapper over the Pact Broker HTTP API (curl, no extra dependencies).
+# URL and token come only from the environment (PACT_BROKER_URL / PACT_BROKER_TOKEN):
+# locally scripts/with-secrets.sh supplies them, in CI GitHub secrets.
+# The default URL is the local compose address, not a secret.
 #
-#   scripts/pact-broker.sh publish         # опублікувати pacts/*.json (версія консюмера)
-#   scripts/pact-broker.sh tag-prod        # позначити версію ПРОВАЙДЕРА тегом prod
-#   scripts/pact-broker.sh can-i-deploy    # гейт: exit 1, якщо deployable != true
+#   scripts/pact-broker.sh publish         # publish pacts/*.json (consumer version)
+#   scripts/pact-broker.sh tag-prod        # tag the PROVIDER version as prod
+#   scripts/pact-broker.sh can-i-deploy    # gate: exit 1 unless deployable == true
 #
-# Версії: CONSUMER_VERSION (дефолт 1.0.0), PROVIDER_VERSION (дефолт 1.0.0).
+# Versions: CONSUMER_VERSION (default 1.0.0), PROVIDER_VERSION (default 1.0.0).
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -23,7 +23,7 @@ ENVIRONMENT="${DEPLOY_ENVIRONMENT:-prod}"
 AUTH=()
 if [ -n "${PACT_BROKER_TOKEN:-}" ]; then AUTH=(-H "Authorization: Bearer ${PACT_BROKER_TOKEN}"); fi
 
-# curl з виводом тіла і HTTP-коду; повертає код у $CODE, тіло в $BODY.
+# curl that prints the body and the HTTP code; returns the code in $CODE, the body in $BODY.
 call() {
   local out
   out="$(curl -sS "${AUTH[@]}" -w $'\n%{http_code}' "$@")"
@@ -53,7 +53,7 @@ case "${1:-}" in
       --data-urlencode "to=$ENVIRONMENT" \
       -H 'Accept: application/hal+json'
     echo "$BODY"
-    # Гейт: проходимо ЛИШЕ на "deployable":true (unknown/false/помилка — стоп).
+    # Gate: pass ONLY on "deployable":true (unknown/false/error — stop).
     if echo "$BODY" | tr -d ' \n' | grep -q '"deployable":true'; then
       echo "can-i-deploy: OK — $CONSUMER@$CONSUMER_VERSION можна викочувати в $ENVIRONMENT"
     else

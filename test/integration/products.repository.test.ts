@@ -66,7 +66,7 @@ describe('ProductsRepository (real Postgres)', () => {
     const { id } = await products.create(aProduct(sellerId, { stock: 3 }));
 
     expect(await products.decrementStock(id, 2)).toBe(true);
-    expect(await products.decrementStock(id, 2)).toBe(false); // лишилось 1
+    expect(await products.decrementStock(id, 2)).toBe(false); // 1 left
     expect((await products.findById(id))!.stock).toBe(1);
   });
 });

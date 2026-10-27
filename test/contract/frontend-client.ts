@@ -1,5 +1,5 @@
-// Уявний фронтенд (консюмер): тонкий клієнт до Marketplace API. Контракт
-// описує рівно те, що цей код читає з відповідей.
+// An imaginary frontend (consumer): a thin client for the Marketplace API. The contract
+// describes exactly what this code reads from the responses.
 export interface ApiResponse<T = any> {
   status: number;
   body: T;

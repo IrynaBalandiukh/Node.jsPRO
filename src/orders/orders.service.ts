@@ -15,9 +15,9 @@ export interface IdempotencyRecord {
   body: Order;
 }
 
-// У поточній версії API немає авторизації (див. openapi.yaml), тож замовлення
-// оформлюються від імені одного службового покупця; створюється лениво й
-// ідемпотентно (INSERT ... ON CONFLICT).
+// The current API version has no authorization (see openapi.yaml), so orders
+// are placed on behalf of a single service buyer, created lazily and
+// idempotently (INSERT ... ON CONFLICT).
 const GUEST_BUYER = {
   email: 'guest-buyer@marketplace.local',
   passwordHash: '!',

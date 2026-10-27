@@ -30,8 +30,8 @@ export function paginate<T>(
   return { items: page, next_cursor };
 }
 
-// Те саме, але для запиту в БД: просимо limit+1 рядків — зайвий рядок і є
-// ознакою «є наступна сторінка», без окремого COUNT.
+// The same, but for a DB query: we ask for limit+1 rows — the extra row is itself
+// the signal that "there is a next page", with no separate COUNT.
 export async function paginateQuery<T>(
   fetch: (limit: number, offset: number) => Promise<T[]>,
   { limit = 20, cursor }: { limit?: number; cursor?: string } = {},

@@ -62,7 +62,7 @@ describe('OrdersRepository (real Postgres)', () => {
       code: PG_FOREIGN_KEY_VIOLATION,
     });
     const { rows } = await db.pool.query('SELECT count(*)::int AS n FROM orders');
-    expect(rows[0].n).toBe(0); // одноатомний CTE: нічого не залишилось
+    expect(rows[0].n).toBe(0); // atomic CTE: nothing left behind
   });
 
   it('aggregates totals per buyer (GROUP BY), ignoring cancelled orders', async () => {

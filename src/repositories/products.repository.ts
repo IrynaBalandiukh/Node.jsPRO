@@ -41,7 +41,7 @@ export class ProductsRepository {
     return rows[0] ? map(rows[0]) : null;
   }
 
-  /** Повертає лише ті id, що існують (і активні). */
+  /** Returns only the ids that exist (and are active). */
   async findExistingIds(ids: string[]): Promise<Set<string>> {
     const valid = ids.filter(isBigintId);
     if (valid.length === 0) return new Set();
@@ -52,7 +52,7 @@ export class ProductsRepository {
     return new Set(rows.map((r) => r.id));
   }
 
-  // Новіші першими (як у OpenAPI-спеці); id — тайбрейкер для стабільного порядку.
+  // Newest first (as in the OpenAPI spec); id is a tiebreaker for a stable order.
   async list(limit: number, offset: number): Promise<Product[]> {
     const { rows } = await this.db.query(
       `SELECT ${COLUMNS} FROM products WHERE is_active
@@ -63,8 +63,8 @@ export class ProductsRepository {
   }
 
   /**
-   * Атомарне списання зі складу: перевірка і декремент в одному UPDATE, без
-   * вікна для гонки. false — товару не вистачає (або нема).
+   * Atomic stock write-off: check and decrement in a single UPDATE, with no
+   * race window. false — not enough stock (or no such product).
    */
   async decrementStock(id: string, quantity: number): Promise<boolean> {
     if (!isBigintId(id)) return false;

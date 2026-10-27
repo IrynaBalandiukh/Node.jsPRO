@@ -11,15 +11,15 @@ import { ConcurrencyLayer1790200000000 } from '../../../src/migrations/179020000
 export interface TestDb {
   container: StartedPostgreSqlContainer;
   pool: Pool;
-  /** Ізоляція між тестами: порожні таблиці, лічильники id з 1. */
+  /** Isolation between tests: empty tables, id counters from 1. */
   reset(): Promise<void>;
-  /** Виставляє env, з якого AppModule збирає підключення до цього контейнера. */
+  /** Sets the env from which AppModule builds the connection to this container. */
   applyAppEnv(): void;
   stop(): Promise<void>;
 }
 
-// Контейнер уже «ready» за логом, але проброшений порт на Docker Desktop
-// інколи ще рве перші з'єднання (ECONNRESET) — чекаємо, поки SELECT 1 пройде.
+// The container is already "ready" per the log, but the forwarded port on Docker Desktop
+// sometimes still resets the first connections (ECONNRESET) — wait until SELECT 1 passes.
 async function waitForPostgres(uri: string, attempts = 40): Promise<void> {
   for (let i = 1; ; i++) {
     const client = new Client({ connectionString: uri });
@@ -37,8 +37,8 @@ async function waitForPostgres(uri: string, attempts = 40): Promise<void> {
   }
 }
 
-// Docker Desktop зрідка віддає 409 «container is not running» просто під час
-// старту (контейнер ще ініціалізується) — повторюємо старт, а не валимо весь файл.
+// Docker Desktop occasionally returns 409 "container is not running" right during
+// startup (the container is still initializing) — retry the start instead of failing the whole file.
 async function startContainer(attempts = 3): Promise<StartedPostgreSqlContainer> {
   for (let i = 1; ; i++) {
     try {
@@ -56,15 +56,15 @@ async function startContainer(attempts = 3): Promise<StartedPostgreSqlContainer>
 const TABLES = 'order_items, orders, products, users, jobs';
 
 /**
- * Піднімає справжній Postgres 16 у Docker і накочує РЕАЛЬНІ міграції
- * застосунку (ті самі, що в проді), а не окремий тестовий DDL.
- * DATABASE_URL видає контейнер у рантаймі — жодного сховища секретів тут нема.
+ * Starts a real Postgres 16 in Docker and applies the application's REAL
+ * migrations (the same as in prod), not a separate test DDL.
+ * DATABASE_URL is issued by the container at runtime — no secret store here.
  */
 export async function startTestDb(): Promise<TestDb> {
   const container = await startContainer();
 
-  // localhost на Docker Desktop (Windows) може резолвитись у ::1, де проброс порту
-  // рве зʼєднання (ECONNRESET) — ходимо за IPv4.
+  // localhost on Docker Desktop (Windows) may resolve to ::1, where the port forwarding
+  // resets connections (ECONNRESET) — use IPv4.
   const uri = container.getConnectionUri().replace('@localhost:', '@127.0.0.1:');
 
   await waitForPostgres(uri);
@@ -80,7 +80,7 @@ export async function startTestDb(): Promise<TestDb> {
   await ds.destroy();
 
   const pool = new Pool({ connectionString: uri });
-  pool.on('error', () => {}); // обрив idle-з'єднання при зупинці контейнера не має валити процес
+  pool.on('error', () => {}); // a dropped idle connection when the container stops must not crash the process
   let passwordFile: string | undefined;
 
   return {
@@ -90,7 +90,7 @@ export async function startTestDb(): Promise<TestDb> {
       await pool.query(`TRUNCATE ${TABLES} RESTART IDENTITY CASCADE`);
     },
     applyAppEnv: () => {
-      // DatabaseService читає пароль з файлу (ротація без рестарту, ДЗ №11).
+      // DatabaseService reads the password from a file (rotation without restart, HW 11).
       passwordFile = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'mp-test-')), 'db_password');
       fs.writeFileSync(passwordFile, container.getPassword());
       Object.assign(process.env, {

@@ -3,10 +3,10 @@ import { NestExpressApplication } from '@nestjs/platform-express';
 import { TestDb } from './postgres';
 
 /**
- * Піднімає ПОВНИЙ застосунок (AppModule без підмін провайдерів) проти
- * контейнера БД і застосовує ту саму конфігурацію, що й main.ts.
- * AppModule імпортується через require ПІСЛЯ виставлення env: ConfigModule.forRoot
- * читає оточення в момент завантаження модуля.
+ * Boots the FULL application (AppModule without provider overrides) against
+ * the DB container and applies the same configuration as main.ts.
+ * AppModule is imported via require AFTER env is set: ConfigModule.forRoot
+ * reads the environment when the module is loaded.
  */
 export async function createTestApp(db: TestDb): Promise<NestExpressApplication> {
   db.applyAppEnv();

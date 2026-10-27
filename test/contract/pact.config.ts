@@ -1,13 +1,25 @@
+import * as fs from 'node:fs';
 import * as path from 'node:path';
 
 export const CONSUMER_NAME = 'marketplace-web';
 export const PROVIDER_NAME = 'marketplace-api';
 
-// <root>/pacts — і з test/contract (ts), і з dist-test/test/contract (js).
-export const PACTS_DIR = path.resolve(__dirname, '..', '..', '..', 'pacts');
+// Walks up from this file to the repo root (the folder with package.json), so the
+// path is right from test/contract (ts-node) and from dist-test/test/contract (js).
+function findRoot(dir: string): string {
+  while (!fs.existsSync(path.join(dir, 'package.json'))) {
+    const parent = path.dirname(dir);
+    if (parent === dir) throw new Error('package.json not found above ' + __dirname);
+    dir = parent;
+  }
+  return dir;
+}
 
-// Версія консюмера для публікації в брокер; у CI — SHA коміту.
+// <root>/pacts
+export const PACTS_DIR = path.join(findRoot(__dirname), 'pacts');
+
+// Consumer version to publish to the broker; in CI — the commit SHA.
 export const CONSUMER_VERSION = process.env.CONSUMER_VERSION ?? '1.0.0';
 
-// Версія провайдера має збігатися з тегом prod у брокері (can-i-deploy).
+// The provider version must match the prod tag in the broker (can-i-deploy).
 export const PROVIDER_VERSION = process.env.PROVIDER_VERSION ?? '1.0.0';

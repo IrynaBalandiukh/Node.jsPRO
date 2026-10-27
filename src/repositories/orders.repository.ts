@@ -14,7 +14,7 @@ export interface BuyerTotals {
   totalCents: number;
 }
 
-// Замовлення + позиції одним запитом: LEFT JOIN order_items і json_agg.
+// Order + items in one query: LEFT JOIN order_items and json_agg.
 const SELECT_ORDER = `
   SELECT o.id::text AS id, o.status, o.total_amount_cents, o.created_at,
          COALESCE(
@@ -42,9 +42,9 @@ export class OrdersRepository {
   constructor(private readonly db: Queryable) {}
 
   /**
-   * Створює замовлення з позиціями ОДНИМ атомарним оператором (CTE): ціна
-   * береться з products у момент створення, total рахується в SQL. Нема
-   * частково створених замовлень, і метод працює з будь-яким Queryable.
+   * Creates an order with its items in ONE atomic statement (CTE): the price
+   * is taken from products at creation time, total is computed in SQL. No
+   * partially created orders, and the method works with any Queryable.
    */
   async create(buyerId: string, items: NewOrderItem[]): Promise<Order> {
     const { rows } = await this.db.query(
@@ -82,7 +82,7 @@ export class OrdersRepository {
     return rows.map(map);
   }
 
-  /** Агрегація: кількість і сума замовлень по покупцях (без скасованих). */
+  /** Aggregation: order count and total per buyer (excluding cancelled). */
   async totalsByBuyer(): Promise<BuyerTotals[]> {
     const { rows } = await this.db.query(
       `SELECT buyer_id::text AS buyer_id, count(*)::int AS orders,

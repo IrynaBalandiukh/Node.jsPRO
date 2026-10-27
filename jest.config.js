@@ -1,13 +1,13 @@
-// Тести компілюються tsc у dist-test/ (esbuild/swc-трансформери не емітять
-// decorator-метадані, потрібні Nest DI) і запускаються як звичайний JS.
+// Tests are compiled by tsc into dist-test/ (esbuild/swc transformers don't emit
+// decorator metadata, which Nest DI needs) and run as plain JS.
 module.exports = {
   rootDir: '.',
   testEnvironment: 'node',
   testMatch: ['<rootDir>/dist-test/test/**/*.test.js'],
-  // Явно, щоб вивід (PASS/✓) був однаковий у будь-якому середовищі: без цього
-  // Jest 30 може сам увімкнути компактний репортер agent.
+  // Explicit so the output (PASS/✓) is identical in any environment: without it
+  // Jest 30 may enable the compact agent reporter on its own.
   reporters: ['default'],
   verbose: true,
-  maxWorkers: 1, // кожен воркер множить контейнери
+  maxWorkers: 1, // each worker multiplies containers
   testTimeout: 120000,
 };

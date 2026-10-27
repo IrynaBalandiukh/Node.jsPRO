@@ -5,8 +5,8 @@ import { PACTS_DIR, PROVIDER_NAME, PROVIDER_VERSION } from './pact.config';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 
-// Provider states сідять БД. Усе через INSERT ... ON CONFLICT DO NOTHING з
-// фіксованими id, тож верифікація повторювана на непорожній базі.
+// Provider states seed the DB. Everything uses INSERT ... ON CONFLICT DO NOTHING with
+// fixed ids, so verification is repeatable on a non-empty database.
 async function seedUsers(db: TestDb) {
   await db.pool.query(`
     INSERT INTO users (id, email, password_hash, role) VALUES
@@ -34,8 +34,8 @@ async function seedOrder(db: TestDb) {
     ON CONFLICT DO NOTHING`);
 }
 
-// Явні id не рухають послідовності: без цього наступний INSERT без id
-// (замовлення від POST /orders) впав би на PK.
+// Explicit ids don't advance the sequences: without this the next INSERT without an id
+// (an order from POST /orders) would fail on the PK.
 async function syncSequences(db: TestDb) {
   for (const table of ['users', 'products', 'orders', 'order_items']) {
     await db.pool.query(
@@ -49,15 +49,15 @@ function pactSource(): Partial<VerifierOptions> {
   if (brokerUrl) {
     return {
       pactBrokerUrl: brokerUrl,
-      // Токен — лише з оточення (сховище локально / secrets GitHub у CI); ключ
-      // не передаємо взагалі, якщо токена нема (локальний брокер без авторизації).
+      // Token only from the environment (vault locally / GitHub secrets in CI); the key
+      // is not passed at all if there is no token (local broker without auth).
       ...(process.env.PACT_BROKER_TOKEN ? { pactBrokerToken: process.env.PACT_BROKER_TOKEN } : {}),
       consumerVersionSelectors: [{ latest: true }],
       publishVerificationResult: true,
       providerVersion: PROVIDER_VERSION,
     };
   }
-  // Без брокера (локальний прогін / грейдер) — контракт з файлу, без публікації.
+  // Without a broker (local run / grader) — contract from file, no publishing.
   const files = fs.readdirSync(PACTS_DIR).filter((f) => f.endsWith('.json'));
   if (files.length === 0) throw new Error(`No pact files in ${PACTS_DIR} — run npm run test:contract first`);
   return { pactUrls: files.map((f) => path.join(PACTS_DIR, f)) };

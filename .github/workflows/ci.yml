@@ -52,5 +52,10 @@ jobs:
       - name: Provider verification (publishes the result)
         run: npm run verify:provider
 
+      # can-i-deploy checks the consumer against the provider version tagged prod;
+      # without this tag a fresh provider SHA always gives "unknown" and the job fails.
+      - name: Tag the verified provider version as prod
+        run: bash scripts/pact-broker.sh tag-prod
+
       - name: can-i-deploy (fails the job unless deployable is true)
         run: bash scripts/pact-broker.sh can-i-deploy

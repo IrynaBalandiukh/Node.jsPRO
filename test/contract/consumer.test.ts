@@ -6,9 +6,9 @@ import { CONSUMER_NAME, PACTS_DIR, PROVIDER_NAME } from './pact.config';
 
 const { like, regex, integer, eachLike, string } = MatchersV3;
 
-// Форми відповідей відповідають openapi/openapi.yaml (ДЗ №9):
-// Product, Order, Problem. Значення — через матчери, щоб контракт не
-// ламався від кожного нового запису.
+// Response shapes match openapi/openapi.yaml (HW 9):
+// Product, Order, Problem. Values use matchers so the contract doesn't
+// break on every new record.
 const productShape = {
   id: regex(/^\d+$/, '1'),
   name: string('Mechanical Keyboard'),
@@ -41,8 +41,8 @@ const JSON_HEADERS = { 'Content-Type': 'application/json; charset=utf-8' };
 const PROBLEM_HEADERS = { 'Content-Type': 'application/problem+json; charset=utf-8' };
 
 describe('marketplace-web ⇄ marketplace-api (consumer contract)', () => {
-  // Pact дописує interactions у наявний файл — чистимо, щоб у контракті не
-  // лишалось застарілих interactions з минулих прогонів.
+  // Pact appends interactions to an existing file — we clean up so the contract
+  // doesn't keep stale interactions from past runs.
   beforeAll(() => {
     fs.rmSync(path.join(PACTS_DIR, `${CONSUMER_NAME}-${PROVIDER_NAME}.json`), { force: true });
   });
