@@ -9,7 +9,7 @@
 | Дата drill | 2026-09-30 |
 | Дамп | `backups/marketplace_2026-09-30_19-54-16.dump` (`pg_dump -Fc`) |
 | Розмір дампу | 20 928 байт (≈ 20,4 КіБ) |
-| Контрольні значення до | `15\|11\|18\|23\|6426650` (users\|products\|orders\|order_items\|sum(orders.total_amount_cents)) |
+| Контрольні значення до | `15\|11\|18\|23\|6426650` (users\|products\|orders\|order_items\|sum(orders.total_cents)) |
 | Контрольні значення після | `15\|11\|18\|23\|6426650` |
 | Результат | **MATCH** (exit 0; повторний запуск — теж MATCH) |
 | Час `pg_restore` | 389 мс (другий прогін: 645 мс) |

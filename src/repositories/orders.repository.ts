@@ -10,7 +10,7 @@ export interface NewOrderItem {
 
 // Order + items in one query: LEFT JOIN order_items and json_agg.
 const SELECT_ORDER = `
-  SELECT o.id::text AS id, o.status, o.total_amount_cents, o.created_at,
+  SELECT o.id::text AS id, o.status, o.total_cents, o.created_at,
          COALESCE(
            json_agg(json_build_object(
              'product_id', oi.product_id::text,
@@ -27,7 +27,7 @@ function map(row: any): Order {
     id: row.id,
     status: row.status,
     items: row.items,
-    total_cents: row.total_amount_cents,
+    total_cents: row.total_cents,
     created_at: new Date(row.created_at).toISOString(),
   };
 }
@@ -47,7 +47,7 @@ export class OrdersRepository {
            FROM unnest($2::bigint[], $3::int[]) AS i(product_id, quantity)
            JOIN products p ON p.id = i.product_id
        ), o AS (
-         INSERT INTO orders (buyer_id, status, total_amount_cents)
+         INSERT INTO orders (buyer_id, status, total_cents)
          SELECT $1, 'pending', COALESCE(SUM(price_cents * quantity), 0)::int FROM lines
          RETURNING id
        ), ins AS (

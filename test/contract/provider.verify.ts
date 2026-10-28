@@ -26,7 +26,7 @@ async function seedProduct(db: TestDb) {
 async function seedOrder(db: TestDb) {
   await seedProduct(db);
   await db.pool.query(`
-    INSERT INTO orders (id, buyer_id, status, total_amount_cents) VALUES (1, 2, 'pending', 8999)
+    INSERT INTO orders (id, buyer_id, status, total_cents) VALUES (1, 2, 'pending', 8999)
     ON CONFLICT DO NOTHING`);
   await db.pool.query(`
     INSERT INTO order_items (id, order_id, product_id, quantity, unit_price_cents)
