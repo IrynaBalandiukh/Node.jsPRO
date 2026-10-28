@@ -8,8 +8,6 @@ import { NestExpressApplication } from '@nestjs/platform-express';
 import { AllExceptionsFilter } from './common/all-exceptions.filter';
 import { openApiErrorHandler } from './common/openapi-error-handler';
 
-// The spec lives in <root>/openapi; the number of levels up differs between
-// src/ (ts-node), dist/ (tsc) and dist-test/src/ (test build).
 function resolveSpecPath(): string {
   for (const up of ['..', '../..']) {
     const candidate = path.join(__dirname, up, 'openapi', 'openapi.yaml');
@@ -18,17 +16,9 @@ function resolveSpecPath(): string {
   throw new Error('openapi/openapi.yaml not found');
 }
 
-/**
- * The single app configuration (Swagger UI, body parser, OpenAPI validation,
- * error filter). Both main.ts and the E2E/contract tests call it, so the tests
- * exercise the same app that ships. The app must be created with
- * `bodyParser: false`.
- */
 export function configureApp(app: NestExpressApplication): void {
   const apiSpec = resolveSpecPath();
 
-  // Swagger UI is generated straight from openapi.yaml at startup, so the docs
-  // can never drift from the contract. Mounted before the validator.
   const openApiDocument = parseYaml(fs.readFileSync(apiSpec, 'utf8'));
   app.use('/docs', swaggerUi.serve, swaggerUi.setup(openApiDocument));
 
@@ -38,8 +28,6 @@ export function configureApp(app: NestExpressApplication): void {
       apiSpec,
       validateRequests: true,
       validateResponses: true,
-      // /health and /docs (Swagger UI) are operational infrastructure, not
-      // Marketplace API resources - they aren't part of the OpenAPI contract.
       ignorePaths: /^\/(health|docs)/,
     }),
   );

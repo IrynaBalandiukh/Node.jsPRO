@@ -1,7 +1,7 @@
 import { Injectable, Logger, OnModuleDestroy } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { readFile } from 'node:fs/promises';
-import { Pool } from 'pg';
+import { Pool, PoolClient } from 'pg';
 import { Env } from '../config/env.schema';
 
 @Injectable()
@@ -10,25 +10,39 @@ export class DatabaseService implements OnModuleDestroy {
   readonly pool: Pool;
 
   constructor(private readonly configService: ConfigService<Env, true>) {
-    const passwordFile = this.configService.get('DB_PASSWORD_FILE', { infer: true });
+    const passwordFile = this.configService.get('DB_PASSWORD_FILE', {
+      infer: true,
+    });
 
     this.pool = new Pool({
       host: this.configService.get('DB_HOST', { infer: true }),
       port: this.configService.get('DB_PORT', { infer: true }),
       database: this.configService.get('DB_NAME', { infer: true }),
       user: this.configService.get('DB_USER', { infer: true }),
-      // Re-read on every new connection instead of once at startup — this is
-      // what makes password rotation possible without restarting the process.
       password: async () => (await readFile(passwordFile, 'utf8')).trim(),
     });
 
-    // rotate.sh terminates existing backends via pg_terminate_backend after
-    // rotating the password. The pool then emits 'error' for the killed idle
-    // connection — without this handler that error is unhandled and crashes
-    // the process. This is not a bug in rotation, it's a required handler.
     this.pool.on('error', (err) => {
-      this.logger.warn(`Postgres pool connection error (will reconnect): ${err.message}`);
+      this.logger.warn(
+        `Postgres pool connection error (will reconnect): ${err.message}`,
+      );
     });
+  }
+
+  /** Runs `fn` on one connection inside BEGIN/COMMIT; any throw rolls everything back. */
+  async withTransaction<T>(fn: (client: PoolClient) => Promise<T>): Promise<T> {
+    const client = await this.pool.connect();
+    try {
+      await client.query('BEGIN');
+      const result = await fn(client);
+      await client.query('COMMIT');
+      return result;
+    } catch (err) {
+      await client.query('ROLLBACK').catch(() => undefined);
+      throw err;
+    } finally {
+      client.release();
+    }
   }
 
   async onModuleDestroy(): Promise<void> {

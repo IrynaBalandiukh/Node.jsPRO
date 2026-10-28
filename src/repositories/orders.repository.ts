@@ -8,12 +8,6 @@ export interface NewOrderItem {
   quantity: number;
 }
 
-export interface BuyerTotals {
-  buyerId: string;
-  orders: number;
-  totalCents: number;
-}
-
 // Order + items in one query: LEFT JOIN order_items and json_agg.
 const SELECT_ORDER = `
   SELECT o.id::text AS id, o.status, o.total_amount_cents, o.created_at,
@@ -80,17 +74,6 @@ export class OrdersRepository {
       [limit, offset],
     );
     return rows.map(map);
-  }
-
-  /** Aggregation: order count and total per buyer (excluding cancelled). */
-  async totalsByBuyer(): Promise<BuyerTotals[]> {
-    const { rows } = await this.db.query(
-      `SELECT buyer_id::text AS buyer_id, count(*)::int AS orders,
-              SUM(total_amount_cents)::int AS total_cents
-         FROM orders WHERE status <> 'cancelled'
-        GROUP BY buyer_id ORDER BY SUM(total_amount_cents) DESC, buyer_id`,
-    );
-    return rows.map((r) => ({ buyerId: r.buyer_id, orders: r.orders, totalCents: r.total_cents }));
   }
 }
 

@@ -75,4 +75,60 @@ describe('Marketplace API (E2E: full AppModule + real Postgres)', () => {
       .send({ items: [{ product_id: '424242', quantity: 1 }] })
       .expect(404);
   });
+  describe('stock check', () => {
+    const stockOf = async (id: string) => (await new ProductsRepository(db.pool).findById(id))!.stock;
+    const order = (items: Array<{ product_id: string; quantity: number }>) =>
+      request(app.getHttpServer()).post('/orders').set('Idempotency-Key', randomUUID()).send({ items });
+
+    it('decrements stock when the order is created', async () => {
+      const seller = await new UsersRepository(db.pool).create(aSeller());
+      const p = await new ProductsRepository(db.pool).create(aProduct(seller.id, { stock: 5 }));
+
+      await order([{ product_id: p.id, quantity: 2 }]).expect(201);
+
+      expect(await stockOf(p.id)).toBe(3);
+    });
+
+    it('returns 409 problem+json when stock is not enough and creates nothing', async () => {
+      const seller = await new UsersRepository(db.pool).create(aSeller());
+      const p = await new ProductsRepository(db.pool).create(aProduct(seller.id, { stock: 2 }));
+
+      const res = await order([{ product_id: p.id, quantity: 3 }]).expect(409);
+
+      expect(res.headers['content-type']).toMatch(/application\/problem\+json/);
+      expect(res.body).toMatchObject({ status: 409, title: 'Conflict' });
+      expect(await stockOf(p.id)).toBe(2);
+      const { rows } = await db.pool.query('SELECT count(*)::int AS n FROM orders');
+      expect(rows[0].n).toBe(0);
+    });
+
+    it('rolls back earlier items when a later item is out of stock', async () => {
+      const seller = await new UsersRepository(db.pool).create(aSeller());
+      const products = new ProductsRepository(db.pool);
+      const plenty = await products.create(aProduct(seller.id, { stock: 10 }));
+      const scarce = await products.create(aProduct(seller.id, { stock: 1 }));
+
+      await order([
+        { product_id: plenty.id, quantity: 4 },
+        { product_id: scarce.id, quantity: 2 },
+      ]).expect(409);
+
+      expect(await stockOf(plenty.id)).toBe(10);
+      expect(await stockOf(scarce.id)).toBe(1);
+    });
+
+    it('never oversells under concurrent orders', async () => {
+      const seller = await new UsersRepository(db.pool).create(aSeller());
+      const p = await new ProductsRepository(db.pool).create(aProduct(seller.id, { stock: 3 }));
+
+      const responses = await Promise.all(
+        Array.from({ length: 10 }, () => order([{ product_id: p.id, quantity: 1 }])),
+      );
+
+      const statuses = responses.map((r) => r.status);
+      expect(statuses.filter((s) => s === 201)).toHaveLength(3);
+      expect(statuses.filter((s) => s === 409)).toHaveLength(7);
+      expect(await stockOf(p.id)).toBe(0);
+    });
+  });
 });

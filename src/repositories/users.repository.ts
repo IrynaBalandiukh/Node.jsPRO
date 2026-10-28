@@ -50,7 +50,7 @@ export class UsersRepository {
     const { rows } = await this.db.query(
       `INSERT INTO users (email, password_hash, role, balance_cents)
        VALUES ($1, $2, $3, $4)
-       ON CONFLICT (email) DO UPDATE SET email = EXCLUDED.email
+       ON CONFLICT (lower(email)) DO UPDATE SET email = users.email
        RETURNING ${COLUMNS}`,
       [user.email, user.passwordHash, user.role, user.balanceCents ?? 0],
     );

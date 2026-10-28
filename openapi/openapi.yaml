@@ -146,6 +146,8 @@ paths:
           $ref: "#/components/responses/BadRequest"
         "404":
           $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
         "422":
           $ref: "#/components/responses/UnprocessableEntity"
 
@@ -218,6 +220,16 @@ components:
 
     NotFound:
       description: The requested resource does not exist.
+      content:
+        application/problem+json:
+          schema:
+            $ref: "#/components/schemas/Problem"
+
+    Conflict:
+      description: >
+        The order cannot be fulfilled because at least one product does not
+        have enough stock. Nothing is reserved or created; the client may
+        retry with smaller quantities.
       content:
         application/problem+json:
           schema:

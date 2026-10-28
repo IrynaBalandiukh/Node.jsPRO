@@ -64,12 +64,12 @@ export class ProductsRepository {
 
   /**
    * Atomic stock write-off: check and decrement in a single UPDATE, with no
-   * race window. false — not enough stock (or no such product).
+   * race window. false — not enough stock (or no such/inactive product).
    */
   async decrementStock(id: string, quantity: number): Promise<boolean> {
     if (!isBigintId(id)) return false;
     const { rowCount } = await this.db.query(
-      `UPDATE products SET stock = stock - $2 WHERE id = $1 AND stock >= $2`,
+      `UPDATE products SET stock = stock - $2 WHERE id = $1 AND stock >= $2 AND is_active`,
       [id, quantity],
     );
     return rowCount === 1;

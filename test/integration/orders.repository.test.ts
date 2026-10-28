@@ -65,17 +65,6 @@ describe('OrdersRepository (real Postgres)', () => {
     expect(rows[0].n).toBe(0); // atomic CTE: nothing left behind
   });
 
-  it('aggregates totals per buyer (GROUP BY), ignoring cancelled orders', async () => {
-    const otherBuyerId = (await users.create(aUser())).id;
-    const p = await products.create(aProduct(sellerId, { priceCents: 1000 }));
-    await orders.create(buyerId, [{ productId: p.id, quantity: 1 }]);
-    await orders.create(buyerId, [{ productId: p.id, quantity: 3 }]);
-    const cancelled = await orders.create(otherBuyerId, [{ productId: p.id, quantity: 9 }]);
-    await db.pool.query(`UPDATE orders SET status = 'cancelled' WHERE id = $1`, [cancelled.id]);
-
-    expect(await orders.totalsByBuyer()).toEqual([{ buyerId, orders: 2, totalCents: 4000 }]);
-  });
-
   it('deleting an order cascades to its items, but a product in use cannot be deleted', async () => {
     const p = await products.create(aProduct(sellerId));
     const order = await orders.create(buyerId, [{ productId: p.id, quantity: 1 }]);

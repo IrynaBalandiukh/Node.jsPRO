@@ -1,17 +1,20 @@
 export const STATUS_TITLES: Record<number, string> = {
   400: 'Bad Request',
   404: 'Not Found',
+  409: 'Conflict',
   422: 'Unprocessable Entity',
   500: 'Internal Server Error',
 };
 
 const PROBLEM_BASE = 'https://marketplace.example/problems';
 
+// 409 is only raised when the requested quantity exceeds the available stock.
 // 422 is only raised for an Idempotency-Key reused with a different body,
 // so it maps to a dedicated type; 400 is a validation / malformed request.
 export const PROBLEM_TYPES: Record<number, string> = {
   400: `${PROBLEM_BASE}/validation-error`,
   404: `${PROBLEM_BASE}/not-found`,
+  409: `${PROBLEM_BASE}/insufficient-stock`,
   422: `${PROBLEM_BASE}/idempotency-key-conflict`,
   500: `${PROBLEM_BASE}/internal-error`,
 };

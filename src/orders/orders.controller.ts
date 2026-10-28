@@ -3,7 +3,7 @@ import type { Response } from 'express';
 import * as crypto from 'node:crypto';
 import { OrdersService } from './orders.service';
 import { paginateQuery, Page } from '../common/pagination';
-import { NotFoundError, UnprocessableEntityError } from '../common/errors';
+import { ConflictError, NotFoundError, UnprocessableEntityError } from '../common/errors';
 import { Order } from '../common/types';
 
 interface CreateOrderBody {
@@ -51,7 +51,10 @@ export class OrdersController {
       return stored.body;
     }
 
-    const { order, error } = await this.ordersService.create(body.items);
+    const { order, error, productId } = await this.ordersService.create(body.items);
+    if (error === 'insufficient_stock') {
+      throw new ConflictError(`Not enough stock for product '${productId}'`);
+    }
     if (error === 'product_not_found' || !order) {
       throw new NotFoundError('One or more products referenced in items do not exist');
     }
