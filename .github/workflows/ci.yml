@@ -29,6 +29,7 @@ jobs:
     needs: test
     env:
       # Broker address and token are GitHub secrets, never constants in code.
+      # Without the secrets the job starts the broker from docker-compose.yml (see below).
       PACT_BROKER_URL: ${{ secrets.PACT_BROKER_URL }}
       PACT_BROKER_TOKEN: ${{ secrets.PACT_BROKER_TOKEN }}
       # The same commit-bound version is used to publish the contract (consumer)
@@ -42,6 +43,14 @@ jobs:
           node-version: 22
           cache: npm
       - run: npm ci
+
+      # No hosted broker configured: use the compose one. 127.0.0.1:9292 is this runner's
+      # own address, not a secret. GITHUB_ENV makes verify:provider publish to it too.
+      - name: Start local Pact Broker (no PACT_BROKER_URL secret)
+        if: env.PACT_BROKER_URL == ''
+        run: |
+          docker compose up -d --wait pact-broker
+          echo "PACT_BROKER_URL=http://127.0.0.1:9292" >> "$GITHUB_ENV"
 
       - name: Consumer test (generates pacts/*.json)
         run: npm run test:contract
