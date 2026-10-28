@@ -169,6 +169,77 @@ paths:
         "404":
           $ref: "#/components/responses/NotFound"
 
+  /orders/{orderId}/events:
+    get:
+      operationId: streamOrderEvents
+      tags: [Orders]
+      summary: Stream status changes of an order (Server-Sent Events)
+      description: >
+        Opens a text/event-stream response that stays open. Every status
+        change is sent as an event named order.status with a JSON data line
+        and an id that grows by one per order (1, 2, 3...). After a dropped
+        connection the client reconnects with the Last-Event-ID header and
+        first receives the buffered events with a greater id. Without the
+        header the whole buffer is sent. The buffer is kept in memory (last
+        100 events per order) and is emptied by a server restart.
+      parameters:
+        - $ref: "#/components/parameters/OrderIdParam"
+        - name: Last-Event-ID
+          in: header
+          required: false
+          description: Id of the last event the client has received.
+          schema:
+            type: string
+          example: "3"
+      responses:
+        "200":
+          description: An open event stream.
+          content:
+            text/event-stream:
+              schema:
+                type: string
+              example: |
+                id: 1
+                event: order.status
+                data: {"order_id":"7","status":"paid","changed_at":"2026-10-28T14:20:05.123Z"}
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /orders/{orderId}/status:
+    patch:
+      operationId: changeOrderStatus
+      tags: [Orders]
+      summary: Change the status of an order
+      description: >
+        Moves an order along its life cycle: pending, paid, processing,
+        shipped, delivered. Before shipping (pending, paid, processing) an
+        order can also become cancelled, which returns the reserved stock to
+        the products. delivered and cancelled are final. A change the life
+        cycle does not allow (for example pending to shipped, or any change of
+        a final order) is rejected with 409. After the change, an order.status
+        event is pushed to clients subscribed to this order.
+      parameters:
+        - $ref: "#/components/parameters/OrderIdParam"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ChangeOrderStatusRequest"
+      responses:
+        "200":
+          description: The order with its new status.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Order"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+
 components:
   parameters:
     LimitParam:
@@ -227,9 +298,11 @@ components:
 
     Conflict:
       description: >
-        The order cannot be fulfilled because at least one product does not
-        have enough stock. Nothing is reserved or created; the client may
-        retry with smaller quantities.
+        The request conflicts with the current state. Creating an order: at
+        least one product does not have enough stock (type insufficient-stock;
+        nothing is reserved or created, the client may retry with smaller
+        quantities). Changing a status: the life cycle does not allow this change
+        from the current status (type invalid-status-transition).
       content:
         application/problem+json:
           schema:
@@ -355,7 +428,7 @@ components:
           example: user_2
         status:
           type: string
-          enum: [pending, paid, cancelled]
+          enum: [pending, paid, processing, shipped, delivered, cancelled]
           example: pending
         items:
           type: array
@@ -382,6 +455,16 @@ components:
           type: string
           nullable: true
           description: Opaque cursor for the next page, or null if there are no more pages.
+
+    ChangeOrderStatusRequest:
+      type: object
+      additionalProperties: false
+      required: [status]
+      properties:
+        status:
+          type: string
+          enum: [paid, processing, shipped, delivered, cancelled]
+          example: paid
 
     CreateOrderRequest:
       type: object

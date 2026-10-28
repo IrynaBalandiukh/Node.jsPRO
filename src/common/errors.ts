@@ -2,6 +2,7 @@ export class HttpError extends Error {
   constructor(
     public readonly status: number,
     message: string,
+    public readonly problemType?: string,
   ) {
     super(message);
   }
@@ -26,7 +27,7 @@ export class UnprocessableEntityError extends HttpError {
 }
 
 export class ConflictError extends HttpError {
-  constructor(message: string) {
-    super(409, message);
+  constructor(message: string, problemType?: string) {
+    super(409, message, problemType);
   }
 }

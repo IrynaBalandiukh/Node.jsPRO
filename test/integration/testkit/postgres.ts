@@ -7,6 +7,7 @@ import 'reflect-metadata';
 import { DataSource } from 'typeorm';
 import { InitSchema1790089957055 } from '../../../src/migrations/1790089957055-InitSchema';
 import { ConcurrencyLayer1790200000000 } from '../../../src/migrations/1790200000000-ConcurrencyLayer';
+import { OrderLifecycleStatuses1790300000000 } from '../../../src/migrations/1790300000000-OrderLifecycleStatuses';
 
 export interface TestDb {
   container: StartedPostgreSqlContainer;
@@ -72,7 +73,11 @@ export async function startTestDb(): Promise<TestDb> {
   const ds = new DataSource({
     type: 'postgres',
     url: uri,
-    migrations: [InitSchema1790089957055, ConcurrencyLayer1790200000000],
+    migrations: [
+      InitSchema1790089957055,
+      ConcurrencyLayer1790200000000,
+      OrderLifecycleStatuses1790300000000,
+    ],
     synchronize: false,
   });
   await ds.initialize();

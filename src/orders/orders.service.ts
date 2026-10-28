@@ -1,10 +1,11 @@
 import { Injectable } from '@nestjs/common';
-import { Order } from '../common/types';
+import { Order, OrderStatus, statusesBefore } from '../common/types';
 import { DatabaseService } from '../database/database.service';
 import { NestOrdersRepository } from '../repositories/orders.repository';
 import { NestProductsRepository } from '../repositories/products.repository';
 import { RepositoriesFactory } from '../repositories/repositories.factory';
 import { NestUsersRepository } from '../repositories/users.repository';
+import { OrderEventsService } from './order-events.service';
 
 export interface CreateOrderResult {
   order?: Order;
@@ -16,6 +17,11 @@ class InsufficientStockError extends Error {
   constructor(readonly productId: string) {
     super(`Not enough stock for product ${productId}`);
   }
+}
+
+export interface ChangeStatusResult {
+  order?: Order;
+  error?: 'order_not_found' | 'invalid_transition';
 }
 
 export interface IdempotencyRecord {
@@ -43,6 +49,7 @@ export class OrdersService {
     private readonly orders: NestOrdersRepository,
     private readonly products: NestProductsRepository,
     private readonly users: NestUsersRepository,
+    private readonly events: OrderEventsService,
   ) {}
 
   findAll(limit: number, offset: number): Promise<Order[]> {
@@ -51,6 +58,33 @@ export class OrdersService {
 
   findById(id: string): Promise<Order | null> {
     return this.orders.findById(id);
+  }
+
+  isOwnedBy(orderId: string, userId: string): Promise<boolean> {
+    return this.orders.isOwnedBy(orderId, userId);
+  }
+
+  async changeStatus(
+    id: string,
+    status: Exclude<OrderStatus, 'pending'>,
+  ): Promise<ChangeStatusResult> {
+    const order = await this.database.withTransaction(async (client) => {
+      const { products, orders } = this.repositories.forClient(client);
+      if (!(await orders.transition(id, statusesBefore(status), status))) return null;
+      if (status === 'cancelled') await products.restockOrder(id);
+      return orders.findById(id);
+    });
+    if (!order) {
+      const exists = await this.orders.findById(id);
+      return { error: exists ? 'invalid_transition' : 'order_not_found' };
+    }
+
+    this.events.publish({
+      orderId: id,
+      status: order.status,
+      changedAt: new Date().toISOString(),
+    });
+    return { order };
   }
 
   async create(

@@ -38,7 +38,7 @@ CREATE TABLE products (
 CREATE TABLE orders (
   id           bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
   buyer_id     bigint NOT NULL REFERENCES users (id),
-  status       text NOT NULL CHECK (status IN ('pending', 'paid', 'cancelled')),
+  status       text NOT NULL CHECK (status IN ('pending', 'paid', 'processing', 'shipped', 'delivered', 'cancelled')),
   total_cents  bigint NOT NULL CHECK (total_cents >= 0),
   created_at   timestamptz NOT NULL DEFAULT now()
 );

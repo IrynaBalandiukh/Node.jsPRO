@@ -12,13 +12,19 @@ import {
 import { User } from './user.entity';
 import { OrderItem } from './order-item.entity';
 
-export type OrderStatus = 'pending' | 'paid' | 'cancelled';
+export type OrderStatus =
+  | 'pending'
+  | 'paid'
+  | 'processing'
+  | 'shipped'
+  | 'delivered'
+  | 'cancelled';
 
 // Mirrors db/schema.sql: orders. total_cents is a bigint in minor units (the
 // sum of the order items), never numeric/float. bigint values arrive from the
 // driver as strings, hence the string type.
 @Entity({ name: 'orders' })
-@Check('chk_orders_status', `"status" IN ('pending', 'paid', 'cancelled')`)
+@Check('chk_orders_status', `"status" IN ('pending', 'paid', 'processing', 'shipped', 'delivered', 'cancelled')`)
 @Check('chk_orders_total_nonneg', `"total_cents" >= 0`)
 // Composite index for q1 (buyer_id + created_at): the order history of one
 // buyer over a period.

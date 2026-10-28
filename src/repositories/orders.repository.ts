@@ -1,6 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import { DatabaseService } from '../database/database.service';
-import { Order } from '../common/types';
+import { Order, OrderStatus } from '../common/types';
 import { isBigintId, Queryable } from './queryable';
 
 export interface NewOrderItem {
@@ -10,7 +10,7 @@ export interface NewOrderItem {
 
 // Order + items in one query: LEFT JOIN order_items and json_agg.
 const SELECT_ORDER = `
-  SELECT o.id::text AS id, o.status, o.total_cents, o.created_at,
+  SELECT o.id::text AS id, o.buyer_id::text AS buyer_id, o.status, o.total_cents::int AS total_cents, o.created_at,
          COALESCE(
            json_agg(json_build_object(
              'product_id', oi.product_id::text,
@@ -25,6 +25,7 @@ const SELECT_ORDER = `
 function map(row: any): Order {
   return {
     id: row.id,
+    buyer_id: row.buyer_id,
     status: row.status,
     items: row.items,
     total_cents: row.total_cents,
@@ -74,6 +75,29 @@ export class OrdersRepository {
       [limit, offset],
     );
     return rows.map(map);
+  }
+
+  async isOwnedBy(orderId: string, buyerId: string): Promise<boolean> {
+    if (!isBigintId(orderId) || !isBigintId(buyerId)) return false;
+    const { rowCount } = await this.db.query(
+      `SELECT 1 FROM orders WHERE id = $1 AND buyer_id = $2`,
+      [orderId, buyerId],
+    );
+    return rowCount === 1;
+  }
+
+  /**
+   * Atomic check-and-set: the status changes only if the current one is in
+   * `from`. false — no such order, or its status does not allow this change
+   * (the row lock makes a concurrent second change wait and then match 0 rows).
+   */
+  async transition(id: string, from: OrderStatus[], to: OrderStatus): Promise<boolean> {
+    if (!isBigintId(id) || from.length === 0) return false;
+    const { rowCount } = await this.db.query(
+      `UPDATE orders SET status = $2 WHERE id = $1 AND status = ANY($3::text[])`,
+      [id, to, from],
+    );
+    return rowCount === 1;
   }
 }
 

@@ -28,7 +28,7 @@ export function configureApp(app: NestExpressApplication): void {
       apiSpec,
       validateRequests: true,
       validateResponses: true,
-      ignorePaths: /^\/(health|docs)/,
+      ignorePaths: /^\/(health|docs|socket\.io)/,
     }),
   );
   app.use(openApiErrorHandler);

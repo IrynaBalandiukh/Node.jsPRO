@@ -1,5 +1,6 @@
 import { ArgumentsHost, Catch, ExceptionFilter, HttpException } from '@nestjs/common';
 import { Request, Response } from 'express';
+import { HttpError } from './errors';
 import { buildProblem } from './problem-json';
 
 // express-openapi-validator errors (missing/invalid params, headers, body) are
@@ -19,7 +20,14 @@ export class AllExceptionsFilter implements ExceptionFilter {
     response
       .status(status)
       .type('application/problem+json')
-      .json(buildProblem(status, detail, request.originalUrl));
+      .json(
+        buildProblem(
+          status,
+          detail,
+          request.originalUrl,
+          exception instanceof HttpError ? exception.problemType : undefined,
+        ),
+      );
   }
 
   private resolveStatus(exception: unknown): number {

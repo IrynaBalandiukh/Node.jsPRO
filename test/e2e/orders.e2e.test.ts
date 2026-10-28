@@ -131,4 +131,87 @@ describe('Marketplace API (E2E: full AppModule + real Postgres)', () => {
       expect(await stockOf(p.id)).toBe(0);
     });
   });
+  describe('status change', () => {
+    async function placeOrder(stock = 5, quantity = 2) {
+      const seller = await new UsersRepository(db.pool).create(aSeller());
+      const product = await new ProductsRepository(db.pool).create(aProduct(seller.id, { stock }));
+      const res = await request(app.getHttpServer())
+        .post('/orders')
+        .set('Idempotency-Key', randomUUID())
+        .send({ items: [{ product_id: product.id, quantity }] })
+        .expect(201);
+      return { product, order: res.body };
+    }
+    const patch = (id: string, status: string) =>
+      request(app.getHttpServer()).patch(`/orders/${id}/status`).send({ status });
+    const stockOf = async (id: string) => (await new ProductsRepository(db.pool).findById(id))!.stock;
+
+    it('moves a pending order to paid', async () => {
+      const { order } = await placeOrder();
+
+      const res = await patch(order.id, 'paid').expect(200);
+
+      expect(res.body).toMatchObject({ id: order.id, status: 'paid' });
+    });
+
+    it('returns the reserved stock when an order is cancelled', async () => {
+      const { product, order } = await placeOrder(5, 2);
+      expect(await stockOf(product.id)).toBe(3);
+
+      await patch(order.id, 'cancelled').expect(200);
+
+      expect(await stockOf(product.id)).toBe(5);
+    });
+
+    it('walks the whole life cycle pending -> paid -> processing -> shipped -> delivered', async () => {
+      const { order } = await placeOrder();
+
+      for (const status of ['paid', 'processing', 'shipped', 'delivered']) {
+        const res = await patch(order.id, status).expect(200);
+        expect(res.body.status).toBe(status);
+      }
+    });
+
+    it('can cancel a paid order and returns its stock once', async () => {
+      const { product, order } = await placeOrder(5, 2);
+      await patch(order.id, 'paid').expect(200);
+
+      await patch(order.id, 'cancelled').expect(200);
+
+      expect(await stockOf(product.id)).toBe(5);
+    });
+
+    it('returns 409 invalid-status-transition for a change the life cycle forbids', async () => {
+      const { order } = await placeOrder();
+
+      const skip = await patch(order.id, 'shipped').expect(409); // pending -> shipped
+      expect(skip.body.type).toMatch(/invalid-status-transition$/);
+
+      await patch(order.id, 'cancelled').expect(200);
+      await patch(order.id, 'paid').expect(409); // cancelled is final
+    });
+
+    it('does not restock a second time and cannot cancel after shipping', async () => {
+      const { product, order } = await placeOrder(5, 2);
+      await patch(order.id, 'cancelled').expect(200);
+      await patch(order.id, 'cancelled').expect(409);
+      expect(await stockOf(product.id)).toBe(5);
+
+      const shipped = await placeOrder(5, 2);
+      for (const status of ['paid', 'processing', 'shipped']) {
+        await patch(shipped.order.id, status).expect(200);
+      }
+      await patch(shipped.order.id, 'cancelled').expect(409);
+      expect(await stockOf(shipped.product.id)).toBe(3);
+    });
+
+    it('returns 404 for an order that does not exist', async () => {
+      await patch('999999', 'paid').expect(404);
+    });
+
+    it('returns 400 for a status outside the allowed values', async () => {
+      const { order } = await placeOrder();
+      await patch(order.id, 'pending').expect(400);
+    });
+  });
 });

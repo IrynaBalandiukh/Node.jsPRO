@@ -74,6 +74,17 @@ export class ProductsRepository {
     );
     return rowCount === 1;
   }
+
+  /** Returns the stock reserved by an order's items (used when the order is cancelled). */
+  async restockOrder(orderId: string): Promise<void> {
+    await this.db.query(
+      `UPDATE products p SET stock = p.stock + i.qty
+         FROM (SELECT product_id, SUM(quantity)::int AS qty
+                 FROM order_items WHERE order_id = $1 GROUP BY product_id) i
+        WHERE p.id = i.product_id`,
+      [orderId],
+    );
+  }
 }
 
 @Injectable()
