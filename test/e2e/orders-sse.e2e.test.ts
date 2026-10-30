@@ -46,7 +46,12 @@ describe('Order status notifications (SSE, E2E)', () => {
   beforeEach(async () => {
     await db.reset();
     // db.reset() restarts order ids at 1, so events buffered by an earlier test would leak in.
-    (app.get(OrderEventsService) as unknown as { buffer: Map<string, unknown> }).buffer.clear();
+    const internals = app.get(OrderEventsService) as unknown as {
+      buffer: Map<string, unknown>;
+      lastIds: Map<string, number>;
+    };
+    internals.buffer.clear();
+    internals.lastIds.clear();
   });
   afterEach(() => {
     streams.splice(0).forEach((s) => s.close());
@@ -132,6 +137,24 @@ describe('Order status notifications (SSE, E2E)', () => {
     await waitFor(() => stream.ids().length > 0);
     await sleep(200);
     expect(stream.ids()).toEqual(['2']);
+  });
+
+  it('keeps ids growing after the order history is evicted from the buffer', async () => {
+    const orderId = await placeOrder();
+    const events = app.get(OrderEventsService);
+    const at = () => new Date().toISOString();
+    for (let i = 0; i < 7; i++) events.publish({ orderId, status: 'paid', changedAt: at() });
+    // More distinct orders than the buffer holds: the first order's history is dropped.
+    for (let i = 0; i < 1000; i++) {
+      events.publish({ orderId: `evict-${i}`, status: 'paid', changedAt: at() });
+    }
+
+    const stream = await openStream(orderId, { 'Last-Event-ID': '7' });
+    events.publish({ orderId, status: 'cancelled', changedAt: at() });
+
+    await waitFor(() => stream.ids().length > 0);
+    await sleep(200);
+    expect(stream.ids()).toEqual(['8']);
   });
 
   it('returns 404 problem+json for an order that does not exist', async () => {

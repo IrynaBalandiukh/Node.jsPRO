@@ -18,13 +18,17 @@ export class OrderEventsService {
   readonly events$: Observable<OrderStatusEvent> = this.subject.asObservable();
 
   private readonly buffer = new Map<string, OrderStatusEvent[]>();
+  // Last id per order, kept even after the history is evicted from `buffer`: if the
+  // numbering restarted at 1, a client with Last-Event-ID: 7 would never see new events.
+  private readonly lastIds = new Map<string, number>();
 
   publish(event: Omit<OrderStatusEvent, 'id'>): OrderStatusEvent {
     const history = this.buffer.get(event.orderId) ?? [];
     const published: OrderStatusEvent = {
       ...event,
-      id: (history[history.length - 1]?.id ?? 0) + 1,
+      id: (this.lastIds.get(event.orderId) ?? 0) + 1,
     };
+    this.lastIds.set(event.orderId, published.id);
 
     history.push(published);
     if (history.length > MAX_EVENTS_PER_ORDER) history.shift();

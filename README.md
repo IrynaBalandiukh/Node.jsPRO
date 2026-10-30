@@ -874,6 +874,12 @@ docker compose up -d --wait
 export DB_HOST=127.0.0.1 DB_PORT=6432 DB_USER=marketplace_app DB_PASSWORD=changeme_local_dev_password DB_NAME=marketplace
 export SKIP_VAULT=1    # у грейдера немає доступу до сховища
 
+# Те, чого вимагає сам застосунок (src/config/env.schema.ts). `.env` і `secrets/` у git немає,
+# тому на свіжому клоні без цих трьох рядків `node dist/main.js` падає з "Invalid environment configuration".
+export DATABASE_URL=postgres://marketplace_app:changeme_local_dev_password@127.0.0.1:6432/marketplace
+mkdir -p secrets && printf '%s' "$DB_PASSWORD" > secrets/db_password
+export DB_PASSWORD_FILE=secrets/db_password
+
 npm ci
 npm run build
 npm run migrate
@@ -901,9 +907,10 @@ bash scripts/with-secrets.sh dev bash scripts/backup.sh          # друкує 
 bash scripts/with-secrets.sh dev bash scripts/restore-drill.sh   # друкує MATCH, exit 0
 ```
 
-ДЗ №18 (realtime): застосунок піднятий (`npm start` в іншому терміналі), БД засіяна.
+ДЗ №18 (realtime): БД засіяна, змінні з блоку вище (`DB_*`, `DATABASE_URL`, `DB_PASSWORD_FILE`) задані.
 
 ```
+node dist/main.js &                         # після npm run build; чекай рядка "Marketplace API listening"
 node scripts/realtime-demo.mjs;             echo "exit=$?"   # A_RECEIVED=1, B_RECEIVED=0, exit=0
 node scripts/realtime-demo.mjs --same-room; echo "exit=$?"   # A_RECEIVED=1, B_RECEIVED=1, exit=0
 ```
