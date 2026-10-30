@@ -1,0 +1,7 @@
+{
+  // IDE only: VS Code picks the nearest tsconfig, and the root one includes only src/
+  // (so test/ had no jest types). The test build still uses tsconfig.test.json.
+  "extends": "../tsconfig.test.json",
+  "compilerOptions": { "noEmit": true },
+  "include": ["../src/**/*.ts", "./**/*.ts"]
+}

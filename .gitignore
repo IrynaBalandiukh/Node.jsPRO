@@ -1,0 +1,9 @@
+node_modules/
+dist/
+spec.json
+.env
+secrets/
+.secrets/
+backups/
+dist-test/
+coverage/

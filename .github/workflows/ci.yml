@@ -1,0 +1,70 @@
+name: CI
+
+on:
+  push:
+    branches: [main, "hw-*"]
+  pull_request:
+
+jobs:
+  test:
+    name: integration + e2e (testcontainers)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npx tsc --noEmit
+      # Docker is preinstalled on ubuntu-latest - testcontainers starts postgres:16-alpine.
+      # Do NOT set DEBUG=testcontainers* here: the library keeps logging after the
+      # tests finish and jest exits 1 even though every test is green.
+      - run: npm run test:integration
+      - run: npm run test:e2e
+
+  contract:
+    name: contract (pact publish, verify, can-i-deploy)
+    runs-on: ubuntu-latest
+    needs: test
+    env:
+      # Broker address and token are GitHub secrets, never constants in code.
+      # Without the secrets the job starts the broker from docker-compose.yml (see below).
+      PACT_BROKER_URL: ${{ secrets.PACT_BROKER_URL }}
+      PACT_BROKER_TOKEN: ${{ secrets.PACT_BROKER_TOKEN }}
+      # The same commit-bound version is used to publish the contract (consumer)
+      # and to publish the verification result (provider).
+      CONSUMER_VERSION: ${{ github.sha }}
+      PROVIDER_VERSION: ${{ github.sha }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+
+      # No hosted broker configured: use the compose one. 127.0.0.1:9292 is this runner's
+      # own address, not a secret. GITHUB_ENV makes verify:provider publish to it too.
+      - name: Start local Pact Broker (no PACT_BROKER_URL secret)
+        if: env.PACT_BROKER_URL == ''
+        run: |
+          docker compose up -d --wait pact-broker
+          echo "PACT_BROKER_URL=http://127.0.0.1:9292" >> "$GITHUB_ENV"
+
+      - name: Consumer test (generates pacts/*.json)
+        run: npm run test:contract
+
+      - name: Publish contract to the broker
+        run: bash scripts/pact-broker.sh publish
+
+      - name: Provider verification (publishes the result)
+        run: npm run verify:provider
+
+      # can-i-deploy checks the consumer against the provider version tagged prod;
+      # without this tag a fresh provider SHA always gives "unknown" and the job fails.
+      - name: Tag the verified provider version as prod
+        run: bash scripts/pact-broker.sh tag-prod
+
+      - name: can-i-deploy (fails the job unless deployable is true)
+        run: bash scripts/pact-broker.sh can-i-deploy
