@@ -5,6 +5,8 @@ import { NestOrdersRepository } from '../repositories/orders.repository';
 import { NestProductsRepository } from '../repositories/products.repository';
 import { RepositoriesFactory } from '../repositories/repositories.factory';
 import { NestUsersRepository } from '../repositories/users.repository';
+import { buildOrderPlacedEvent } from '../messaging/events';
+import { OrderEventsPublisher } from '../messaging/publisher';
 import { OrderEventsService } from './order-events.service';
 
 export interface CreateOrderResult {
@@ -50,6 +52,7 @@ export class OrdersService {
     private readonly products: NestProductsRepository,
     private readonly users: NestUsersRepository,
     private readonly events: OrderEventsService,
+    private readonly publisher: OrderEventsPublisher,
   ) {}
 
   findAll(limit: number, offset: number): Promise<Order[]> {
@@ -120,6 +123,8 @@ export class OrdersService {
           items.map((i) => ({ productId: i.product_id, quantity: i.quantity })),
         );
       });
+      // Після COMMIT: подію публікуємо лише для замовлення, яке справді збережене.
+      await this.publisher.publishOrderPlaced(buildOrderPlacedEvent(order));
       return { order };
     } catch (err) {
       if (err instanceof InsufficientStockError) {

@@ -14,6 +14,10 @@ export const envSchema = z.object({
   // The app itself still connects via DB_HOST/../DB_PASSWORD_FILE above —
   // that's what makes password rotation without a restart possible.
   DATABASE_URL: z.string().url(),
+
+  // RabbitMQ (HW #19), amqp://user:pass@host:5672. Optional: without it the API does
+  // not publish order.placed. In real runs it comes from the secret store (HW #11).
+  BROKER_URL: z.string().url().optional(),
 });
 
 export type Env = z.infer<typeof envSchema>;

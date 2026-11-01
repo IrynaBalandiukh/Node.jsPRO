@@ -68,6 +68,27 @@ services:
       retries: 20
       start_period: 10s
 
+  # RabbitMQ (HW 19): the broker between the API (producer) and the consumer.
+  # Image with -management: UI at http://127.0.0.1:15672 (app/app) to look at x-death.
+  # AMQP port is 5672; 15672 is the management web UI and does NOT speak AMQP.
+  # app/app are dev credentials of this compose file, not a secret.
+  rabbitmq:
+    image: rabbitmq:4.2-management
+    environment:
+      RABBITMQ_DEFAULT_USER: app
+      RABBITMQ_DEFAULT_PASS: app
+    ports:
+      - "5672:5672"
+      - "15672:15672"
+    healthcheck:
+      # check_running, not "the port is open": the TCP port opens before the Erlang
+      # node starts accepting basic.publish (otherwise the client gets ECONNRESET).
+      test: ["CMD-SHELL", "rabbitmq-diagnostics -q check_running"]
+      interval: 5s
+      timeout: 10s
+      retries: 20
+      start_period: 15s
+
 volumes:
   marketplace_pgdata:
   pact_broker_pgdata:

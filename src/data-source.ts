@@ -6,6 +6,7 @@ import { Product } from './entities/product.entity';
 import { Order } from './entities/order.entity';
 import { OrderItem } from './entities/order-item.entity';
 import { Job } from './entities/job.entity';
+import { FulfillmentTask } from './entities/fulfillment-task.entity';
 
 const DB_URL = process.env.DB_URL ?? process.env.DATABASE_URL;
 
@@ -28,7 +29,7 @@ export function buildDataSourceOptions(
           database: process.env.DB_NAME,
         }),
     synchronize: false,
-    entities: [User, Product, Order, OrderItem, Job],
+    entities: [User, Product, Order, OrderItem, Job, FulfillmentTask],
     migrations: [migrationsGlob],
     logging: false,
     ...overrides,

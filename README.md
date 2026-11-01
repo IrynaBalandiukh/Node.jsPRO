@@ -864,6 +864,81 @@ done
 редагування); для статусів ця двосторонність не потрібна, а відновлення
 довелося б писати самому.
 
+## Async-події через RabbitMQ (ДЗ №19)
+
+У ДЗ №18 realtime доставляв тому, хто зараз підключений. Тепер між API й читачем стоїть
+брокер (RabbitMQ 4.2 LTS, образ `rabbitmq:4.2-management`), який зберігає подію, доки
+з'явиться одержувач.
+
+### Топологія (оголошує споживач/бутстрап, не продюсер)
+
+```
+API ──► shop.events (topic) ──"order.placed"──► orders.placed (quorum) ──► consumer
+             │ alternate-exchange                   │ reject(requeue=false) / delivery-limit=5
+             ▼                                      ▼
+      shop.unroutable (fanout)               shop.dlx (direct) ──► orders.placed.dlq
+```
+
+Код: `src/messaging/topology.ts` (exchange/черга/binding/DLX), `events.ts` (контракт),
+`publisher.ts`, `consumer.ts`. Подія `order.placed` публікується з `OrdersService.create`
+після `COMMIT`. Контракт: `{ eventId, type, occurredAt, data: { orderId, buyerId, totalCents, items[] } }`,
+а не ORM-сутність через spread; `eventId` (UUID) створюється один раз і за ним споживач
+упізнає дубль.
+
+- **Публікація.** `createConfirmChannel` + `waitForConfirms` + `mandatory: true` (+ слухач `return`):
+  «опублікував» означає «брокер узяв відповідальність», а не «віддав у сокет». Додатково
+  на `shop.events` висить alternate exchange: подія без жодного binding лягає в `shop.unroutable`,
+  а не зникає мовчки при позитивному confirm.
+- **Споживач.** `noAck: false`, `ack` лише після ефекту. Отруєне повідомлення (не JSON або порушує контракт) —
+  `reject(requeue=false)` → DLX. Тимчасова помилка (БД) — `reject(requeue=true)`: reject (а не nack)
+  збільшує лічильник доставок, тож після `x-delivery-limit` повідомлення піде в DLQ з причиною
+  `delivery_limit`, а не крутитиметься вічно. `msg === null` (basic.cancel від брокера) обробляється явно.
+- **Ефект і ідемпотентність.** Ефект — завдання на комплектацію: `INSERT INTO fulfillment_tasks … ON CONFLICT DO NOTHING`
+  (PK `event_id`, UNIQUE `order_id`). Ідемпотентність тут — властивість *операції*, а не окремий ключ у пам'яті:
+  `UPDATE … SET qty = qty - 1` повтор подвоїв би, а `INSERT … ON CONFLICT` — ні. Сховище — Postgres, тож воно
+  переживає рестарт споживача й спільне між репліками (Set у пам'яті процесу не рахується).
+- **DLQ** — окремий контур: `x-dead-letter-exchange` на робочій черзі (аргументом при оголошенні) → `shop.dlx` → `orders.placed.dlq`.
+  Причину читаю з `x-first-death-reason` / `x-death[0].reason`.
+
+### prefetch = 10
+
+Формула: `prefetch × час обробки < consumer_timeout`. Обробка одного повідомлення — один `INSERT` у Postgres
+(~5–10 мс), `consumer_timeout` стоковий (30 хв = 1 800 000 мс): 10 × 10 мс = 100 мс ≪ 1 800 000 мс.
+`prefetch=1` для задач по кілька мс був би гіршим: кожне повідомлення чекало б кола «ack → брокер → наступна доставка».
+Дефолт (0 = без ліміту) віддав би всю чергу першому ж споживачеві.
+
+### Три демо (власні прогони)
+
+Усі три самі чистять стан (purge черг + видалення `demo-*` рядків), друкують `ключ=значення`, самі перевіряють
+інваріант і завершуються з кодом ≠ 0, якщо його порушено. Усі йдуть через `scripts/with-secrets.sh`.
+
+| Команда | Вивід мого прогону | exit |
+|---|---|---|
+| `npm run demo:publish` | `published=5 delivered=5 effect=5 acked=5 dlq=0 work=0 prefetch=10` | 0 |
+| `npm run demo:dlq` | `rejected=1 work=0 dlq=1 dlq-reason=rejected effect=0` | 0 |
+| `npm run demo:duplicate` | `deliveries=2 effect=1 skipped=1 redelivered=1` | 0 |
+
+**Як викликаний дубль (`demo:duplicate`):** справжній `SIGKILL` дочірнього процесу-споживача
+(`src/demo-crash-consumer.ts`). Він застосовує ефект і вбиває сам себе *до* `ack`: ОС закриває сокет, брокер бачить обрив і
+повертає повідомлення (`redelivered=true`). Батьківський процес отримує другу доставку, `ON CONFLICT DO NOTHING`
+відкидає її (`skipped=1`), ефект один. `channel.close()` не використовую: це коректне завершення, а не падіння.
+
+### Чому це at-least-once, а не exactly-once
+
+Брокер **не** дає exactly-once, і ніхто його на рівні доставки не дає. Підтвердив рано (autoAck) — падіння
+забирає повідомлення (втрата); підтвердив пізно (ack після ефекту) — якщо ack не доїхав, брокер поверне
+повідомлення (дубль). Третього немає. Тому доставка тут *at-least-once*, а *exactly-once результат* дає
+поєднання з ідемпотентним ефектом: ручний ack після ефекту (щоб не губити) + `INSERT … ON CONFLICT DO NOTHING`
+за `eventId` (щоб дубль не подвоював). `demo:duplicate` показує це очима: `deliveries=2`, `effect=1`.
+Ack — це не «дійшло», а «я більше не вимагаю повтору».
+
+**Відома межа (закриє ДЗ №22).** Між «ефект застосовано» і «ack» немає спільної транзакції з брокером, а подія
+публікується вже після `COMMIT` замовлення (dual write: впасти між ними можна, тоді подія не опублікується). Це закриє
+transactional outbox та `processed_messages` в одній транзакції з ефектом.
+
+Також: `x-dead-letter-strategy: at-least-once` без `overflow: reject-publish` мовчки відкочується на at-most-once
+(політика приймається, у лозі лише попередження). Я лишив дефолт брокера, ДЗ цього не потребує.
+
 ## Grading
 
 Грейдер не має доступу до сховища, тому запускає все з `SKIP_VAULT=1`; значення
@@ -920,4 +995,21 @@ node scripts/realtime-demo.mjs --same-room; echo "exit=$?"   # A_RECEIVED=1, B_R
 ```
 grep -rn "synchronize" src/    # synchronize: false
 grep -rn "onDelete" src/       # CASCADE і RESTRICT
+```
+
+ДЗ №19 (RabbitMQ). Адреса брокера в проді береться зі сховища (змінна `BROKER_URL`, поруч із підключенням до БД);
+грейдер задає її з дев-креденшелів `docker-compose.yml`. Схема `amqp`, порт `5672` (це AMQP; `15672` — вебморда, не AMQP).
+`docker compose up -d --wait` чекає healthcheck `rabbitmq-diagnostics -q check_running`.
+БД з блоків вище вже піднята й змігрована (`npm run migrate` створює таблицю `fulfillment_tasks`).
+
+```
+docker compose up -d --wait
+export BROKER_URL=amqp://app:app@127.0.0.1:5672
+export SKIP_VAULT=1
+export DATABASE_URL=postgres://marketplace_app:changeme_local_dev_password@127.0.0.1:6432/marketplace
+npm ci && npx tsc --noEmit
+npm run migrate
+npm run demo:publish     # published=5 effect=5 dlq=0 prefetch=10
+npm run demo:dlq         # work=0 dlq=1 dlq-reason=rejected
+npm run demo:duplicate   # deliveries=2 effect=1
 ```
