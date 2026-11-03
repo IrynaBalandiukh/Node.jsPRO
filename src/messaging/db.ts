@@ -1,6 +1,5 @@
 import { Pool } from 'pg';
 
-/** Пул Postgres для консюмера й демо; підключення — ті самі змінні, що й у data-source.ts. */
 export function createPool(max = 5): Pool {
   const url = process.env.DB_URL ?? process.env.DATABASE_URL;
   if (url) return new Pool({ connectionString: url, max });
@@ -17,7 +16,9 @@ export function createPool(max = 5): Pool {
 export function brokerUrl(): string {
   const url = process.env.BROKER_URL;
   if (!url) {
-    console.error('BROKER_URL is not set (comes from the secret store via scripts/with-secrets.sh, or export it with SKIP_VAULT=1)');
+    console.error(
+      'BROKER_URL is not set (comes from the secret store via scripts/with-secrets.sh, or export it with SKIP_VAULT=1)',
+    );
     process.exit(1);
   }
   return url;

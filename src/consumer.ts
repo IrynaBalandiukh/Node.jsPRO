@@ -3,8 +3,6 @@ import { startConsumer } from './messaging/consumer';
 import { brokerUrl, createPool } from './messaging/db';
 import { assertTopology } from './messaging/topology';
 
-// Окремий процес споживача order.placed (npm run consumer). Топологію оголошує він (крок 1).
-
 (async () => {
   const pool = createPool();
   const conn = await amqp.connect(brokerUrl());
@@ -12,7 +10,6 @@ import { assertTopology } from './messaging/topology';
   await assertTopology(ch);
 
   const consumer = await startConsumer(ch, pool, {
-    // Брокер скасував підписку: продовжувати нічого, виходимо, щоб оркестратор перезапустив.
     onCancel: () => {
       console.error('broker cancelled the consumer (basic.cancel), exiting');
       process.exit(1);

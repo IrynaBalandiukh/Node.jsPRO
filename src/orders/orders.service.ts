@@ -73,7 +73,8 @@ export class OrdersService {
   ): Promise<ChangeStatusResult> {
     const order = await this.database.withTransaction(async (client) => {
       const { products, orders } = this.repositories.forClient(client);
-      if (!(await orders.transition(id, statusesBefore(status), status))) return null;
+      if (!(await orders.transition(id, statusesBefore(status), status)))
+        return null;
       if (status === 'cancelled') await products.restockOrder(id);
       return orders.findById(id);
     });
@@ -123,7 +124,6 @@ export class OrdersService {
           items.map((i) => ({ productId: i.product_id, quantity: i.quantity })),
         );
       });
-      // Після COMMIT: подію публікуємо лише для замовлення, яке справді збережене.
       await this.publisher.publishOrderPlaced(buildOrderPlacedEvent(order));
       return { order };
     } catch (err) {
