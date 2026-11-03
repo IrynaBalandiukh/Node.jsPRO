@@ -1,0 +1,2 @@
+# Every night at 02:30: full pg_dump -Fc (HW 15). Replace the repo path with your own.
+30 2 * * * cd /opt/marketplace && bash scripts/with-secrets.sh prod bash scripts/backup.sh >> backups/backup.log 2>&1
